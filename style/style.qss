@@ -1,0 +1,198 @@
+/* General Widget styling */
+QWidget {
+    font-family: 'Roboto', sans-serif;
+    font-size: 13px;
+    color: #FEFAE0;
+    background: transparent;
+}
+
+/* Main Window with gradient background */
+QMainWindow {
+    background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0,
+                                stop: 0 #a050f0, stop: 1 #141516);
+}
+
+/* Menu Bar */
+QMenuBar {
+    background-color: #a050f0;
+    color: #FEFAE0;
+    padding: 4px;
+    border: none;
+}
+
+QMenuBar::item {
+    padding: 4px 8px;
+    background-color: transparent;
+}
+
+QMenuBar::item:selected {
+    background-color: #000000;
+    border-radius: 4px;
+}
+
+/* Menus */
+QMenu {
+    background-color: #283618;
+    border: 1px solid #606C38;
+    color: #FEFAE0;
+}
+
+QMenu::item:selected {
+    background-color: #BC6C25;
+}
+
+/* Dock Widget */
+QDockWidget {
+    border: 1px solid #606C38;
+}
+
+QDockWidget::title {
+    background-color: #BC6C25;
+    padding: 6px;
+    color: #FEFAE0;
+}
+
+/* Lists */
+QListWidget {
+    background-color: #a050f0;
+    color: #FEFAE0;
+    border: 1px solid #283618;
+    border-radius: 4px;
+    padding: 2px;
+    font-style: italic;
+}
+
+QListWidget::item {
+    padding: 4px;
+}
+
+QListWidget::item:selected {
+    background-color: #BC6C25;
+    color: #283618;
+}
+
+QListWidget::item:hover {
+    background-color: #283618;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #BC6C25;
+    color: #FEFAE0;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    min-width: 80px;
+}
+
+QPushButton:hover {
+    background-color: #A65C1E;  /* Darker variant */
+}
+
+QPushButton:pressed {
+    background-color: #8C531B;
+}
+
+
+
+
+QPushButton#deleteButton {
+    background-color: #ffffff;
+    min-width: 15px;
+    max-width: 15x;
+    min-height: 18px;
+    max-height: 18px;
+}
+
+QPushButton#deleteButton:hover {
+    background-color: #FF6666;
+}
+
+/* Track Controls (if you use a custom property/class name "track-control") */
+.track-control {
+    background-color: #283618;
+    border: 1px solid #606C38;
+    border-radius: 6px;
+    padding: 8px;
+    margin: 4px 0;
+}
+
+/* Checkboxes */
+QCheckBox {
+    color: #FEFAE0;
+}
+
+QCheckBox::indicator:checked {
+    background-color: green; /* Change to your desired color */
+    border: 1px solid black; /* Optional border */
+    width: 12px; /* Adjust size as needed */
+    height: 12px;
+}
+QCheckBox::indicator:unchecked {
+    background-color: red;
+    border: 1px solid black;
+    width: 12px;
+    height: 12px;
+}
+
+
+
+QListView::indicator:checked {
+    background-color: green;
+    border: 2px solid red;
+    width: 10px;
+    height: 10px;
+    box-shadow: 2px 2px 5px rgb(0, 0, 0);
+}
+
+QListView::indicator:unchecked {
+    background-color: red;
+    border: 1px solid black;
+    width: 12px;
+    height: 12px;
+}
+
+/* SpinBox, ComboBox, and PlainTextEdit */
+QComboBox, QPlainTextEdit {
+    background-color: #606C38;
+    color: #FEFAE0;
+    border: 1px solid #283618;
+    border-radius: 4px;
+    padding: 2px;
+}
+
+QSpinBox{
+    background-color: #606C38;
+    color: #FEFAE0;
+    border: 1px solid #283618;
+    border-radius: 4px;
+    padding: 2px;
+    min-width: 25px;
+    min-height: 25px;
+}
+
+
+QPlainTextEdit::placeholderText {
+    color: #A5A5A5;
+}
+
+/* Color Button (if using a custom widget named ColorButton) */
+ColorButton {
+    min-width: 24px;
+    max-width: 24px;
+    min-height: 24px;
+    max-height: 24px;
+    border-radius: 12px;
+    border: 2px solid #283618;
+}
+
+/* Figure Canvas Area */
+FigureCanvas {
+    background-color: #FEFAE0;  /* Light background for plots */
+    border: 6px solid #606C38;
+    border-radius:10px
+}
+
+
+
+QGroupBox { min-width: 200px; max-width: 200px; }

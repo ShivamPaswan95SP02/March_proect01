@@ -1,8 +1,8 @@
 import sys
 import os
+import pickle
 from PyQt5.QtGui import QIcon
 import lasio
-import pickle
 from PyQt5.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QMenu, QVBoxLayout, QFormLayout, QLabel, QLineEdit,
     QDialogButtonBox, QMainWindow, QDockWidget, QListWidget,
@@ -334,7 +334,7 @@ class TrackControl(QWidget):
 
         add_curve_btn = QPushButton("Add Curve")
         add_curve_btn.setFixedSize(120, 30)
-        add_curve_btn.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 15pt; font-weight: bold;")
+        add_curve_btn.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt; font-weight: bold;")
         add_curve_btn.clicked.connect(lambda: self.add_curve(curves))
         layout.addWidget(add_curve_btn)
 
@@ -409,6 +409,16 @@ class WellLogViewer(QMainWindow):
         load_welltops_action.triggered.connect(self.load_well_tops)
         file_menu.addAction(load_welltops_action)
 
+        settings_menu = menubar.addMenu("Settings")
+
+        save_template_action = QAction("Save Template", self)
+        save_template_action.triggered.connect(self.save_template)
+        settings_menu.addAction(save_template_action)
+
+        load_template_action = QAction("Load Template", self)
+        load_template_action.triggered.connect(self.load_template)
+        settings_menu.addAction(load_template_action)
+
         toggle_controls_action = QAction("Toggle Controls", self)
         toggle_controls_action.triggered.connect(self.toggle_controls)
         menubar.addAction(toggle_controls_action)
@@ -417,17 +427,6 @@ class WellLogViewer(QMainWindow):
         change_bg_action = QAction("Change Background Color", self)
         change_bg_action.triggered.connect(self.change_background_color)
         menubar.addAction(change_bg_action)
-
-        # Settings Menu
-        settings_menu = menubar.addMenu("Settings")
-
-        save_action = QAction("Save Config", self)
-        save_action.triggered.connect(self.save_configuration)
-        settings_menu.addAction(save_action)
-
-        load_action = QAction("Load Config", self)
-        load_action.triggered.connect(self.load_configuration)
-        settings_menu.addAction(load_action)
 
         self.dock = QDockWidget("Control", self)
         self.dock.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt;")
@@ -445,7 +444,7 @@ class WellLogViewer(QMainWindow):
         well_layout.addWidget(self.well_list)
         list_layout.addLayout(well_layout)
         # Loaded Well Tops list (shows only top names).
-        self.well_tops_list = QListWidget()
+        self.well_tops_list = ClickableListWidget()
         self.well_tops_list.itemChanged.connect(self.well_top_item_changed)
         welltops_label = QLabel("Loaded Well Tops:")
         welltops_layout = QVBoxLayout()
@@ -467,45 +466,6 @@ class WellLogViewer(QMainWindow):
 
         dock_widget.setLayout(dock_layout)
         self.dock.setWidget(dock_widget)
-
-    def save_configuration(self):
-        """Save well and track settings to a pickle file."""
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Configuration", "", "Config Files (*.pkl);;All Files (*)", options=options)
-        if file_path:
-            config_data = {
-                "selected_wells": [self.well_list.item(i).text() for i in range(self.well_list.count()) if self.well_list.item(i).checkState() == Qt.Checked],
-                "tracks": [{"curves": [curve.curve_box.currentText() for curve in track.curves], "bg_color": track.bg_color} for track in self.tracks]
-            }
-            with open(file_path, "wb") as f:  # Use binary write mode
-                pickle.dump(config_data, f)
-
-    def load_configuration(self):
-        """Load well and track settings from a pickle file."""
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration", "", "Config Files (*.pkl);;All Files (*)", options=options)
-        if file_path:
-            with open(file_path, "rb") as f:  # Use binary read mode
-                config_data = pickle.load(f)
-
-            # Restore selected wells
-            for i in range(self.well_list.count()):
-                item = self.well_list.item(i)
-                if item.text() in config_data["selected_wells"]:
-                    item.setCheckState(Qt.Checked)
-                else:
-                    item.setCheckState(Qt.Unchecked)
-
-            # Restore tracks
-            self.tracks.clear()
-            self.track_tabs.clear()
-            for track_data in config_data["tracks"]:
-                track = TrackControl(len(self.tracks) + 1, [])
-                track.bg_color = track_data["bg_color"]
-                self.tracks.append(track)
-                self.track_tabs.addTab(track, f"Track {track.number}")
-
-            self.update_plot()
 
     def change_background_color(self):
         """Opens a color picker to change the background color."""
@@ -671,6 +631,102 @@ class WellLogViewer(QMainWindow):
                 widget.setParent(None)
                 widget.deleteLater()
                 del self.figure_widgets[well]
+
+    def save_template(self):
+        """Save the current template settings to a .pkl file."""
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Template", "", "Template Files (*.pkl)")
+        if file_path:
+            template_data = {
+                'tracks': [track.number for track in self.tracks],
+                'track_settings': [self.get_track_settings(track) for track in self.tracks],
+                'selected_wells': [self.well_list.item(i).text() for i in range(self.well_list.count())
+                                   if self.well_list.item(i).checkState() == Qt.Checked],
+                'selected_top_names': list(self.selected_top_names)
+            }
+            with open(file_path, 'wb') as f:
+                pickle.dump(template_data, f)
+
+    def load_template(self):
+        """Load template settings from a .pkl file."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Template", "", "Template Files (*.pkl)")
+        if file_path:
+            with open(file_path, 'rb') as f:
+                template_data = pickle.load(f)
+            self.apply_template(template_data)
+
+    def get_track_settings(self, track):
+        """Get the settings of a track."""
+        return {
+            'bg_color': track.bg_color,
+            'grid': track.grid.isChecked(),
+            'flip_y': track.flip_y.isChecked(),
+            'y_min': track.y_min.text(),
+            'y_max': track.y_max.text(),
+            'curves': [self.get_curve_settings(curve) for curve in track.curves]
+        }
+
+    def get_curve_settings(self, curve):
+        """Get the settings of a curve."""
+        return {
+            'curve_name': curve.curve_box.currentText(),
+            'width': curve.width.value(),
+            'color': curve.color,
+            'line_style': curve.get_line_style(),
+            'flip': curve.flip.isChecked(),
+            'x_min': curve.x_min.text(),
+            'x_max': curve.x_max.text(),
+            'scale': curve.scale_combobox.currentText()
+        }
+
+    def apply_template(self, template_data):
+        """Apply the template settings."""
+        # Clear existing tracks
+        while self.track_tabs.count() > 0:
+            self.delete_track(0)
+
+        # Load tracks
+        for track_number, track_settings in zip(template_data['tracks'], template_data['track_settings']):
+            curves = sorted(set(curve for well in self.wells.values() for curve in well['data'].columns))
+            track = TrackControl(track_number, curves)
+            track.bg_color = track_settings['bg_color']
+            track.bg_color_btn.setStyleSheet(f"background-color: {track.bg_color}; border: none;")
+            track.grid.setChecked(track_settings['grid'])
+            track.flip_y.setChecked(track_settings['flip_y'])
+            track.y_min.setText(track_settings['y_min'])
+            track.y_max.setText(track_settings['y_max'])
+            track.changed.connect(self.update_plot)
+            self.tracks.append(track)
+            self.track_tabs.addTab(track, f"Track {track.number}")
+
+            # Load curves
+            for curve_settings in track_settings['curves']:
+                curve = CurveControl(len(track.curves) + 1, curves)
+                curve.curve_box.setCurrentText(curve_settings['curve_name'])
+                curve.width.setValue(curve_settings['width'])
+                curve.color = curve_settings['color']
+                curve.color_btn.setStyleSheet(f"background-color: {curve.color}; border: none;")
+                curve.line_style_box.setCurrentText(curve_settings['line_style'])
+                curve.flip.setChecked(curve_settings['flip'])
+                curve.x_min.setText(curve_settings['x_min'])
+                curve.x_max.setText(curve_settings['x_max'])
+                curve.scale_combobox.setCurrentText(curve_settings['scale'])
+                curve.changed.connect(track.changed.emit)
+                track.curves.append(curve)
+                track.curve_tabs.addTab(curve, f"Curve {len(track.curves)}")
+
+        # Select wells
+        for well_name in template_data['selected_wells']:
+            for i in range(self.well_list.count()):
+                if self.well_list.item(i).text() == well_name:
+                    self.well_list.item(i).setCheckState(Qt.Checked)
+
+        # Select top names
+        for top_name in template_data['selected_top_names']:
+            for i in range(self.well_tops_list.count()):
+                if self.well_tops_list.item(i).data(Qt.UserRole) == top_name:
+                    self.well_tops_list.item(i).setCheckState(Qt.Checked)
+
+        self.update_plot()
 
 app = QApplication(sys.argv)
 app.setStyleSheet(loadStyleSheet("style/darkmode.qss"))

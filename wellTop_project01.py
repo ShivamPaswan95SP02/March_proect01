@@ -568,8 +568,19 @@ class WellLogViewer(QMainWindow):
         if not file_path:
             return
         try:
-            # Determine the delimiter based on the file extension
-            delimiter = ',' if file_path.endswith('.csv') else None
+            # Determine the delimiter based on file content
+            delimiter = ','
+            if file_path.endswith('.txt'):
+                with open(file_path, 'r') as file:
+                    lines = file.readlines()
+                    has_comma = any(',' in line for line in lines)
+                    has_avlevel = any('avlevel' in line.lower() for line in lines)
+                    
+                    # Adjust delimiter if avlevel and comma are found
+                    if has_comma and has_avlevel:
+                        delimiter = ','
+                    else:
+                        delimiter = None
 
             # Read the file with the appropriate delimiter
             df = pd.read_csv(
@@ -580,20 +591,28 @@ class WellLogViewer(QMainWindow):
                 engine='python',
                 on_bad_lines='skip'
             )
+            
             # Determine common number of columns.
             num_cols = df.apply(lambda row: row.count(), axis=1).mode()[0]
             df = df.iloc[:, :num_cols]
+
             # Check for header by trying to convert third column to float.
             header_present = False
             try:
                 float(df.iloc[0, 2])
             except ValueError:
                 header_present = True
+
             if header_present:
                 df = df.drop(0).reset_index(drop=True)
+            
+            # Trim to the first three columns if necessary
             if df.shape[1] > 3:
                 df = df.iloc[:, :3]
+                
             df.columns = ["well", "top", "md"]
+
+            # Process well tops
             for idx, row in df.iterrows():
                 well = str(row["well"]).strip()
                 top = str(row["top"]).strip()
@@ -605,8 +624,10 @@ class WellLogViewer(QMainWindow):
                     self.well_tops[well] = []
                 self.well_tops[well].append((top, md))
             self.update_well_tops_list()
+
         except Exception as e:
             print(f"Error loading well tops from {file_path}: {str(e)}")
+
 
     def update_well_tops_list(self):
         self.well_tops_list.clear()

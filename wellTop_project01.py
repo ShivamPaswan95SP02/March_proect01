@@ -155,9 +155,9 @@ class FigureWidget(QWidget):
                     for (top, md) in well_top_lines:
                         track.ax.axhline(y=md, color='red', linestyle='--', linewidth=1)
                         track.ax.text(
-                            0.98, md, f"{self.well_name}: {top}",
+                            0.02, md, f"{self.well_name}: {top}",  # Adjust x-coordinate to 0.02 for left alignment
                             transform=track.ax.get_yaxis_transform(),
-                            color='red', fontsize=8, horizontalalignment='right', verticalalignment='bottom'
+                            color='red', fontsize=8, horizontalalignment='left', verticalalignment='bottom'
                         )
 
         self.canvas.draw()
@@ -333,10 +333,26 @@ class TrackControl(QWidget):
         layout.addWidget(self.curve_tabs)
 
         add_curve_btn = QPushButton("Add Curve")
-        add_curve_btn.setFixedSize(120, 30)
-        add_curve_btn.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt; font-weight: bold;")
+        add_curve_btn.setFixedSize(150, 30)
+        add_curve_btn.setStyleSheet("""
+            background-color: White;
+            border-radius: 5px;
+            color: blue;
+            font: 12pt;
+            font-weight: bold;
+
+        """)
         add_curve_btn.clicked.connect(lambda: self.add_curve(curves))
-        layout.addWidget(add_curve_btn)
+
+        # Center the button within its layout
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch(1)
+        btn_layout.addWidget(add_curve_btn)
+        btn_layout.addStretch(1)
+        layout.addLayout(btn_layout)
+
+        # Set a fixed height for the TrackControl widget
+        self.setFixedHeight(300)
 
         self.add_curve(curves)  # Start with one curve
 
@@ -376,10 +392,11 @@ class WellLogViewer(QMainWindow):
     def __init__(self):
         super().__init__()
         self.wells = {}
-        self.well_tops = {}       # {well: [(top, md), ...]}
-        self.selected_top_names = set()  # NEW: Holds unique top names that are selected.
+        self.well_tops = {}
+        self.selected_top_names = set()
         self.tracks = []
         self.figure_widgets = {}
+        self.show_well_tops = True  # New attribute to track well top visibility
         self.initUI()
         self.setWindowIcon(QIcon('images/ONGC_Logo.png'))
 
@@ -423,10 +440,14 @@ class WellLogViewer(QMainWindow):
         toggle_controls_action.triggered.connect(self.toggle_controls)
         menubar.addAction(toggle_controls_action)
 
-        # New action: Change Background Color
-        change_bg_action = QAction("Change Background Color", self)
+        change_bg_action = QAction("Change Bg Color", self)
         change_bg_action.triggered.connect(self.change_background_color)
         menubar.addAction(change_bg_action)
+
+        # New action: Toggle Well Tops Visibility
+        self.toggle_well_tops_action = QAction("Hide Well Tops", self)
+        self.toggle_well_tops_action.triggered.connect(self.toggle_well_tops)
+        menubar.addAction(self.toggle_well_tops_action)
 
         self.dock = QDockWidget("Control", self)
         self.dock.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt;")
@@ -435,18 +456,18 @@ class WellLogViewer(QMainWindow):
         dock_widget = QWidget()
         dock_layout = QVBoxLayout()
         list_layout = QHBoxLayout()
-        # Loaded Wells list.
+
         self.well_list = ClickableListWidget()
         self.well_list.itemChanged.connect(self.update_plot)
-        well_label = QLabel("Loaded Wells:")
+        well_label = QLabel("Wells:")
         well_layout = QVBoxLayout()
         well_layout.addWidget(well_label)
         well_layout.addWidget(self.well_list)
         list_layout.addLayout(well_layout)
-        # Loaded Well Tops list (shows only top names).
+
         self.well_tops_list = ClickableListWidget()
         self.well_tops_list.itemChanged.connect(self.well_top_item_changed)
-        welltops_label = QLabel("Loaded Well Tops:")
+        welltops_label = QLabel("Well Tops:")
         welltops_layout = QVBoxLayout()
         welltops_layout.addWidget(welltops_label)
         welltops_layout.addWidget(self.well_tops_list)
@@ -460,12 +481,39 @@ class WellLogViewer(QMainWindow):
 
         self.track_tabs = QTabWidget()
         self.track_tabs.setStyleSheet("background-color: #e2e2e2; border-radius: 5px; color: #53003e; font: 10pt;")
-        self.track_tabs.setTabsClosable(True)  # Enable close button on tabs
-        self.track_tabs.tabCloseRequested.connect(self.delete_track)  # Connect tab close event
+        self.track_tabs.setTabsClosable(True)
+        self.track_tabs.tabCloseRequested.connect(self.delete_track)
         dock_layout.addWidget(self.track_tabs)
 
         dock_widget.setLayout(dock_layout)
         self.dock.setWidget(dock_widget)
+
+    def toggle_well_tops(self):
+        """Toggle the visibility of well tops."""
+        self.show_well_tops = not self.show_well_tops
+        self.toggle_well_tops_action.setText("Hide Well Tops" if self.show_well_tops else "Show Well Tops")
+        self.update_plot()
+
+    def update_plot(self):
+        selected_wells = [self.well_list.item(i).text() for i in range(self.well_list.count())
+                        if self.well_list.item(i).checkState() == Qt.Checked]
+        for well in selected_wells:
+            if well not in self.figure_widgets:
+                self.figure_widgets[well] = FigureWidget(well)
+                self.figure_layout.addWidget(self.figure_widgets[well])
+            well_top_lines = []
+            if well in self.well_tops and self.show_well_tops:
+                for top, md in self.well_tops[well]:
+                    if top in self.selected_top_names:
+                        well_top_lines.append((top, md))
+            self.figure_widgets[well].update_plot(self.wells[well]['data'], self.tracks, well_top_lines)
+        for well in list(self.figure_widgets.keys()):
+            if well not in selected_wells:
+                widget = self.figure_widgets[well]
+                self.figure_layout.removeWidget(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+                del self.figure_widgets[well]
 
     def change_background_color(self):
         """Opens a color picker to change the background color."""
@@ -520,10 +568,14 @@ class WellLogViewer(QMainWindow):
         if not file_path:
             return
         try:
-            # Read the file with whitespace delimiter and no header.
+            # Determine the delimiter based on the file extension
+            delimiter = ',' if file_path.endswith('.csv') else None
+
+            # Read the file with the appropriate delimiter
             df = pd.read_csv(
                 file_path,
-                delim_whitespace=True,
+                delimiter=delimiter,
+                delim_whitespace=True if delimiter is None else False,
                 header=None,
                 engine='python',
                 on_bad_lines='skip'
@@ -609,28 +661,6 @@ class WellLogViewer(QMainWindow):
             track.number = i
             track.update_curve_numbers()  # Renumber curves within the track
             self.track_tabs.setTabText(i - 1, f"Track {i}")
-
-    def update_plot(self):
-        selected_wells = [self.well_list.item(i).text() for i in range(self.well_list.count())
-                        if self.well_list.item(i).checkState() == Qt.Checked]
-        for well in selected_wells:
-            if well not in self.figure_widgets:
-                self.figure_widgets[well] = FigureWidget(well)
-                self.figure_layout.addWidget(self.figure_widgets[well])
-            # Build list of (top, md) pairs for this well if the top is selected.
-            well_top_lines = []
-            if well in self.well_tops:
-                for top, md in self.well_tops[well]:
-                    if top in self.selected_top_names:
-                        well_top_lines.append((top, md))
-            self.figure_widgets[well].update_plot(self.wells[well]['data'], self.tracks, well_top_lines)
-        for well in list(self.figure_widgets.keys()):
-            if well not in selected_wells:
-                widget = self.figure_widgets[well]
-                self.figure_layout.removeWidget(widget)
-                widget.setParent(None)
-                widget.deleteLater()
-                del self.figure_widgets[well]
 
     def save_template(self):
         """Save the current template settings to a .pkl file."""
@@ -728,9 +758,9 @@ class WellLogViewer(QMainWindow):
 
         self.update_plot()
 
-app = QApplication(sys.argv)
-app.setStyleSheet(loadStyleSheet("style/darkmode.qss"))
-viewer = WellLogViewer()
-viewer.show()
-
-sys.exit(app.exec_())
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setStyleSheet(loadStyleSheet("style/darkmode.qss"))
+    viewer = WellLogViewer()
+    viewer.show()
+    sys.exit(app.exec_())

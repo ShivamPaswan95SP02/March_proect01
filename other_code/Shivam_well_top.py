@@ -1,19 +1,22 @@
 import sys
 import os
-import lasio
 import pickle
-import pandas as pd
+from PyQt5.QtGui import QIcon
+import lasio
 from PyQt5.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QMenu, QVBoxLayout, QFormLayout, QLabel, QLineEdit,
     QDialogButtonBox, QMainWindow, QDockWidget, QListWidget,
     QListWidgetItem, QWidget, QComboBox, QPushButton, QCheckBox, QSpinBox,
     QScrollArea, QAction, QColorDialog, QTabWidget, QFrame, QApplication
 )
-from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+import pandas as pd
+
+# Update the overall font size on plots
+plt.rcParams.update({'font.size': 8.5})
 
 def loadStyleSheet(fileName):
     try:
@@ -23,7 +26,7 @@ def loadStyleSheet(fileName):
         print("Failed to load stylesheet:", e)
         return ""
 
-# --- Custom QListWidget ---
+# --- Custom QListWidget: Clicking on an item's label toggles its check state ---
 class ClickableListWidget(QListWidget):
     def mousePressEvent(self, event):
         item = self.itemAt(event.pos())
@@ -38,117 +41,144 @@ class ClickableListWidget(QListWidget):
                 return
         super().mousePressEvent(event)
 
-# --- FigureWidget with well tops plotting and annotation ---
 class FigureWidget(QWidget):
     mouse_moved = pyqtSignal(float, float)
-    curve_clicked = pyqtSignal(str, object)
-    track_clicked = pyqtSignal(object)
 
     def __init__(self, well_name, parent=None):
         super().__init__(parent)
         self.well_name = well_name
-        self.figure = Figure()
+        self.figure = Figure(layout="constrained")  # Use constrained layout
         self.canvas = FigureCanvas(self.figure)
+        self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
         layout = QVBoxLayout(self)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
-        self.active_well_tops = []
-        self.canvas.mpl_connect("button_press_event", self.on_click)
 
-    def on_click(self, event):
-        """Handle click events to detect which track was clicked."""
+        # Crosshair lines
+        self.vline = None
+        self.hlines = []
+
+    def on_mouse_move(self, event):
         if event.inaxes:
-            if event.button == 3:  # Right-click
-                for track in self.tracks:
-                    if event.inaxes == track.ax:
-                        self.track_clicked.emit(track)
-                        return
+            x, y = event.xdata, event.ydata
+            self.mouse_moved.emit(x, y)
+            self.update_crosshair(x, y)
+
+    def update_crosshair(self, x, y):
+        if self.vline is None:
+            # Initialize the vertical line on each axis
+            self.vline = [ax.axvline(x, color='green', linestyle='--') for ax in self.figure.axes]
+        else:
+            # Update the position of the vertical line on each axis
+            for ax, line in zip(self.figure.axes, self.vline):
+                line.set_xdata([x, x])  # Set x data as a sequence
+
+        for ax in self.figure.axes:
+            if ax not in [line.axes for line in self.hlines]:
+                hline = ax.axhline(y, color='red', linestyle='--')
+                self.hlines.append(hline)
+            else:
+                for hline in self.hlines:
+                    if hline.axes == ax:
+                        hline.set_ydata([y, y])  # Set y data as a sequence
+
+        self.canvas.draw()
 
     def update_plot(self, data, tracks, well_top_lines=None):
         self.figure.clear()
         self.data = data
         self.tracks = tracks
-        self.figure.text(0.01, 0.99, f"Well: {self.well_name}", ha='left', va='top', fontsize=10, color='Grey')
-
         n_tracks = len(tracks)
         if n_tracks == 0:
             ax = self.figure.add_subplot(111)
             ax.text(0.5, 0.5, "No tracks", ha='center', va='center')
         else:
-            # Determine maximum number of valid curves across all tracks.
-            max_valid_curves = max([
-                len([curve for curve in track.curves
-                     if curve.curve_box.currentText() != "Select Curve" and curve.curve_box.currentText() in data.columns])
-                for track in tracks
-            ] or [1])
-            # Adjust the top margin.
-            top_margin = max(0.95 - (max_valid_curves - 1) * 0.03, 0.85)
             axes = self.figure.subplots(1, n_tracks, sharey=True) if n_tracks > 1 else [self.figure.add_subplot(111)]
-            self.figure.subplots_adjust(wspace=0, bottom=0.005, top=top_margin)
             depth = data['DEPT']
-            all_lines = []
+
             for idx, (ax, track) in enumerate(zip(axes, tracks)):
-                ax.clear()
-                ax.set_facecolor(track.bg_color)
-                track.ax = ax  # Store the primary axis for the track.
-                # Plot curves.
+                ax.set_facecolor(track.bg_color)  # Apply Background Color
+                track.ax = ax  # Store the axis for later reference
                 valid_curves = []
-                for curve in track.curves:
+                lines_list = []
+                if not track.curves:
+                    ax.text(0.5, 0.5, "No curves", ha='center', va='center')
+                    continue
+
+                for i, curve in enumerate(track.curves):
                     curve_name = curve.curve_box.currentText()
                     if curve_name == "Select Curve" or curve_name not in data.columns:
                         continue
-                    valid_curves.append(curve)
-                ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
-                for i, curve in enumerate(valid_curves):
+
+                    # Create a new axis for each curve to manage individual x-axis limits
                     twin_ax = ax.twiny()
-                    twin_ax.tick_params(axis='both', which='major', labelsize=8, colors=curve.color)
-                    base_offset = 20 if max_valid_curves <= 3 else 10
-                    offset = base_offset * i
-                    twin_ax.spines["top"].set_position(("outward", offset))
-                    twin_ax.spines["bottom"].set_visible(False)
-                    twin_ax.spines["right"].set_visible(False)
-                    twin_ax.spines["left"].set_visible(False)
-                    twin_ax.tick_params(axis='x', which='both', bottom=False, top=True, labeltop=True)
-                    twin_ax.set_xlabel(curve.curve_box.currentText(), color=curve.color)
-                    twin_ax.spines["top"].set_edgecolor(curve.color)
-                    if curve.flip_x.isChecked():
+                    twin_ax.xaxis.set_ticks_position('top')
+                    twin_ax.xaxis.set_label_position('top')
+                    twin_ax.spines['top'].set_color(curve.color)
+                    twin_ax.spines['top'].set_linewidth(2)
+                    twin_ax.spines['top'].set_position(('axes', 1 + i * 0.08))  # Adjust the gap here
+                    twin_ax.tick_params(axis='x', colors=curve.color)
+                    twin_ax.set_xlabel(curve_name, color=curve.color)
+
+                    line, = twin_ax.plot(
+                        data[curve_name], depth,
+                        color=curve.color,
+                        linewidth=curve.width.value(),
+                        linestyle=curve.get_line_style(),
+                        label=curve_name,  # Add curve name as label for legend
+                        picker=True  # Enable picking on the line
+                    )
+                    line.set_gid(curve_name)  # Set an ID for the line
+                    valid_curves.append(curve)
+                    lines_list.append(line)
+
+                    if curve.flip.isChecked():
                         twin_ax.invert_xaxis()
+
+                    # Apply individual x-axis limits for each curve
                     if curve.x_min.text():
                         try:
-                            xmin_val = float(curve.x_min.text())
-                            cur_xlim = twin_ax.get_xlim()
-                            twin_ax.set_xlim(xmin_val, cur_xlim[1])
+                            twin_ax.set_xlim(float(curve.x_min.text()), twin_ax.get_xlim()[1])
                         except ValueError:
                             pass
                     if curve.x_max.text():
                         try:
-                            xmax_val = float(curve.x_max.text())
-                            cur_xlim = twin_ax.get_xlim()
-                            twin_ax.set_xlim(cur_xlim[0], xmax_val)
+                            twin_ax.set_xlim(twin_ax.get_xlim()[0], float(curve.x_max.text()))
                         except ValueError:
                             pass
+
+                    # Apply individual scale setting for each curve
                     if curve.scale_combobox.currentText() == "Log":
-                        twin_ax.set_xscale("log")
+                        twin_ax.set_xscale('log')
                     else:
-                        twin_ax.set_xscale("linear")
-                    line, = twin_ax.plot(
-                        data[curve.curve_box.currentText()], depth,
-                        color=curve.color,
-                        linewidth=curve.width.value(),
-                        linestyle=curve.get_line_style(),
-                        picker=True
-                    )
-                    line.set_gid(curve.curve_box.currentText())
-                    all_lines.append(line)
+                        twin_ax.set_xscale('linear')
+
                 if idx == 0:
                     ax.set_ylabel("Depth")
                 ax.grid(track.grid.isChecked())
+
                 ax.set_ylim(depth.max(), depth.min())
-                if track.flip_y.isChecked():
+                if track.flip_y.isChecked():  # Flip Y-axis if checked
                     ax.invert_yaxis()
-            if all_lines:
-                self.figure.legend(all_lines, [line.get_gid() for line in all_lines],
-                                   loc='upper center', bbox_to_anchor=(0.5, 1.09), ncol=4, fontsize='small')
+
+                # Apply Y min/max if values are provided
+                if track.y_min.text():
+                    try:
+                        ax.set_ylim(float(track.y_min.text()), ax.get_ylim()[1])
+                    except ValueError:
+                        pass
+                if track.y_max.text():
+                    try:
+                        ax.set_ylim(ax.get_ylim()[0], float(track.y_max.text()))
+                    except ValueError:
+                        pass
+
+                # Remove x-axis labels for the primary axis
+                ax.set_xticklabels([])
+
+            # Add a title to the figure using the well name in a box
+            self.figure.suptitle(f"Well: {self.well_name}", fontsize=11, alpha=0.6)
+
             # --- Plot Well Tops ---
             # well_top_lines is expected to be a list of tuples (top, md) for this well.
             if well_top_lines:
@@ -156,228 +186,268 @@ class FigureWidget(QWidget):
                     for (top, md) in well_top_lines:
                         track.ax.axhline(y=md, color='red', linestyle='--', linewidth=1)
                         track.ax.text(
-                            0.98, md, f"{self.well_name}: {top}",
+                            0.02, md, f"{self.well_name}: {top}",  # Adjust x-coordinate to 0.02 for left alignment
                             transform=track.ax.get_yaxis_transform(),
-                            color='red', fontsize=8, horizontalalignment='right', verticalalignment='bottom'
+                            color='red', fontsize=8, horizontalalignment='left', verticalalignment='bottom'
                         )
+
         self.canvas.draw()
 
-# --- CurveControl remains unchanged ---
 class CurveControl(QWidget):
     changed = pyqtSignal()
-    deleteRequested = pyqtSignal(object)
 
-    def __init__(self, curve_number, curves, default_color="#1f77b4", parent=None):
+    def __init__(self, curve_number, curves, parent=None):
         super().__init__(parent)
-        main_layout = QVBoxLayout(self)
-        top_row = QHBoxLayout()
+        layout = QHBoxLayout(self)
+
+        # **Apply StyleSheet to the entire TrackControl Widget**
+        self.setStyleSheet("""
+            border-radius: 5px;
+            color: Black;
+            font: 10pt;
+            padding: 2px;
+            height: 30px;
+        """)
+
+        # **Curve Number Label**
         self.curve_label = QLabel(f"Curve {curve_number}:")
-        top_row.addWidget(self.curve_label)
+        layout.addWidget(self.curve_label)
+
         self.curve_box = QComboBox()
         self.curve_box.addItem("Select Curve")
         self.curve_box.addItems(curves)
         self.curve_box.currentIndexChanged.connect(self.changed.emit)
-        top_row.addWidget(self.curve_box)
+        layout.addWidget(self.curve_box)
+
         self.width = QSpinBox()
         self.width.setRange(1, 5)
         self.width.setValue(1)
         self.width.valueChanged.connect(self.changed.emit)
-        top_row.addWidget(QLabel("Width:"))
-        top_row.addWidget(self.width)
-        self.color = default_color
+        layout.addWidget(QLabel("Width:"))
+        layout.addWidget(self.width)
+
+        # Initial curve color set to black.
+        self.color = "#000000"
         self.color_btn = QPushButton("Color")
         self.color_btn.setStyleSheet(f"background-color: {self.color}; border: none;")
         self.color_btn.clicked.connect(self.select_color)
-        top_row.addWidget(self.color_btn)
+        layout.addWidget(self.color_btn)
+
+        # **Line Style Selection**
         self.line_style_box = QComboBox()
         self.line_style_box.addItems(["Solid", "Dashed", "Dotted", "Dash-dot"])
         self.line_style_box.currentIndexChanged.connect(self.changed.emit)
-        top_row.addWidget(QLabel("Line Style:"))
-        top_row.addWidget(self.line_style_box)
-        main_layout.addLayout(top_row)
-        bottom_row = QHBoxLayout()
-        self.flip_x = QCheckBox("Flip X-Axis")
-        self.flip_x.stateChanged.connect(self.changed.emit)
-        bottom_row.addWidget(self.flip_x)
-        bottom_row.addWidget(QLabel("X min:"))
+        layout.addWidget(QLabel("Style:"))
+        layout.addWidget(self.line_style_box)
+
+        self.flip = QCheckBox("X-Flip")
+        self.flip.stateChanged.connect(self.changed.emit)
+        layout.addWidget(self.flip)
+
+        # X min and X max input fields
+        xy_range_layout = QHBoxLayout()
+        xy_range_layout.addWidget(QLabel("X-min:"))
         self.x_min = QLineEdit()
+        self.x_min.setStyleSheet("background-color: White; color: blue; font: 12pt;")
+        self.x_min.setFixedWidth(50)
         self.x_min.setPlaceholderText("Auto")
-        self.x_min.textChanged.connect(self.changed.emit)
-        bottom_row.addWidget(self.x_min)
-        bottom_row.addWidget(QLabel("X max:"))
+        self.x_min.textChanged.connect(self.changed.emit)  # Connect to changed signal
+        xy_range_layout.addWidget(self.x_min)
+
+        xy_range_layout.addWidget(QLabel("X-max:"))
         self.x_max = QLineEdit()
+        self.x_max.setStyleSheet("background-color: White; color: blue; font: 10pt;")
+        self.x_max.setFixedWidth(50)
         self.x_max.setPlaceholderText("Auto")
-        self.x_max.textChanged.connect(self.changed.emit)
-        bottom_row.addWidget(self.x_max)
-        bottom_row.addWidget(QLabel("Scale:"))
+        self.x_max.textChanged.connect(self.changed.emit)  # Connect to changed signal
+        xy_range_layout.addWidget(self.x_max)
+
+        # **Scale Selection**
         self.scale_combobox = QComboBox()
         self.scale_combobox.addItems(["Linear", "Log"])
         self.scale_combobox.currentIndexChanged.connect(self.changed.emit)
-        bottom_row.addWidget(self.scale_combobox)
-        main_layout.addLayout(bottom_row)
+        xy_range_layout.addWidget(self.scale_combobox)
+
+        layout.addLayout(xy_range_layout)
 
     def select_color(self):
         color = QColorDialog.getColor()
         if color.isValid():
             self.color = color.name()
+            # Update both the color button and the curve label to match the chosen color.
             self.color_btn.setStyleSheet(f"background-color: {self.color}; border: none;")
             self.curve_label.setStyleSheet(f"color: {self.color};")
             self.changed.emit()
 
     def get_line_style(self):
+        """Returns the Matplotlib line style based on selection."""
         styles = {"Solid": "-", "Dashed": "--", "Dotted": ":", "Dash-dot": "-."}
         return styles[self.line_style_box.currentText()]
 
-# --- TrackControl remains mostly unchanged ---
 class TrackControl(QWidget):
     changed = pyqtSignal()
-    deleteRequested = pyqtSignal(object)
 
     def __init__(self, number, curves, parent=None):
         super().__init__(parent)
         self.number = number
         self.curves = []
-        self.bg_color = "#FFFFFF"
-        self.curve_count = 0
+        self.bg_color = "#FFFFFF"  # Default background color (white)
+        self.curve_count = 0  # Track number of added curves
         self.setContextMenuPolicy(Qt.CustomContextMenu)
+
+        # **Apply StyleSheet to the entire TrackControl Widget**
+        self.setStyleSheet("""
+            background-color: White;
+            border-radius: 5px;
+            color: #53003e;
+            font: 10pt;
+            padding: 5px;
+            min-width: fit-content;
+        """)
+
         layout = QVBoxLayout(self)
-        combined_layout = QHBoxLayout()
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+
+        self.scroll_widget = QWidget()
+        self.scroll_layout = QVBoxLayout(self.scroll_widget)
+        self.scroll_area.setWidget(self.scroll_widget)
+
+        range_layout = QHBoxLayout()
         self.grid = QCheckBox("Grid")
-        self.grid.setChecked(True)
+        self.grid.setFixedWidth(100)  # Set fixed width
         self.grid.stateChanged.connect(self.changed.emit)
-        combined_layout.addWidget(self.grid)
-        self.flip_y = QCheckBox("Flip Y-Axis")
+        range_layout.addWidget(self.grid)
+
+        self.flip_y = QCheckBox("Flip Y-Axis")  # New checkbox for flipping Y-axis
         self.flip_y.stateChanged.connect(self.changed.emit)
-        combined_layout.addWidget(self.flip_y)
+        self.flip_y.setFixedWidth(100)  # Set fixed width
+        range_layout.addWidget(self.flip_y)
+
+        # Background Color Selection Button
         self.bg_color_btn = QPushButton("Bg Color")
+        self.bg_color_btn.setStyleSheet(f"background-color: {self.bg_color}; border: none;")
+        self.bg_color_btn.setFixedWidth(100)  # Set fixed width
         self.bg_color_btn.clicked.connect(self.select_bg_color)
-        self.bg_color_btn.setStyleSheet(f"background-color: {self.bg_color};")
-        combined_layout.addWidget(self.bg_color_btn)
-        combined_layout.addWidget(QLabel("Y min:"))
+        range_layout.addWidget(self.bg_color_btn)
+
+        # Y min and Y max input fields with fixed width labels
+        y_min_label = QLabel("Y min:")
+        y_min_label.setFixedWidth(50)  # Set fixed width for the label
+        range_layout.addWidget(y_min_label)
+
         self.y_min = QLineEdit()
+        self.y_min.setStyleSheet("background-color: White; color: blue; font: 12pt;")
         self.y_min.setPlaceholderText("Auto")
-        self.y_min.textChanged.connect(self.changed.emit)
-        combined_layout.addWidget(self.y_min)
-        combined_layout.addWidget(QLabel("Y max:"))
+        self.y_min.setFixedWidth(60)  # Set fixed width for the input field
+        self.y_min.textChanged.connect(self.changed.emit)  # Connect to changed signal
+        range_layout.addWidget(self.y_min)
+
+        y_max_label = QLabel("Y max:")
+        y_max_label.setFixedWidth(50)  # Set fixed width for the label
+        range_layout.addWidget(y_max_label)
+
         self.y_max = QLineEdit()
+        self.y_max.setStyleSheet("background-color: White; color: blue; font: 12pt;")
         self.y_max.setPlaceholderText("Auto")
-        self.y_max.textChanged.connect(self.changed.emit)
-        combined_layout.addWidget(self.y_max)
-        layout.addLayout(combined_layout)
+        self.y_max.setFixedWidth(60)  # Set fixed width for the input field
+        self.y_max.textChanged.connect(self.changed.emit)  # Connect to changed signal
+        range_layout.addWidget(self.y_max)
+
+        layout.addLayout(range_layout)
+
+        # Curve Tabs
         self.curve_tabs = QTabWidget()
-        self.curve_tabs.setObjectName("curveTabs")
         self.curve_tabs.setTabsClosable(True)
         self.curve_tabs.tabCloseRequested.connect(self.remove_curve)
         layout.addWidget(self.curve_tabs)
+
         add_curve_btn = QPushButton("Add Curve")
-        add_curve_btn.setIcon(QIcon("Icons/curve.png"))
-        add_curve_btn.setLayoutDirection(Qt.RightToLeft)
+        add_curve_btn.setFixedSize(150, 30)
+        add_curve_btn.setStyleSheet("""
+            background-color: White;
+            border-radius: 5px;
+            color: blue;
+            font: 12pt;
+            font-weight: bold;
+
+        """)
         add_curve_btn.clicked.connect(lambda: self.add_curve(curves))
-        layout.addWidget(add_curve_btn)
-        self.add_curve(curves)
+
+        # Center the button within its layout
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch(1)
+        btn_layout.addWidget(add_curve_btn)
+        btn_layout.addStretch(1)
+        layout.addLayout(btn_layout)
+
+        # Set a fixed height for the TrackControl widget
+        self.setFixedHeight(300)
+
+        self.add_curve(curves)  # Start with one curve
+
+    def select_bg_color(self):
+        """Opens a color picker to change background color and update the button."""
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.bg_color = color.name()
+            self.bg_color_btn.setStyleSheet(f"background-color: {self.bg_color}; border: none;")
+            self.changed.emit()
 
     def add_curve(self, curves):
-        self.curve_count += 1
-        curve = CurveControl(self.curve_count, curves)
+        self.curve_count += 1  # Increment curve number
+        curve = CurveControl(self.curve_count, curves)  # Pass curve_number
         curve.changed.connect(self.changed.emit)
-        curve.deleteRequested.connect(lambda: self.remove_curve_by_instance(curve))
         self.curves.append(curve)
         self.curve_tabs.addTab(curve, f"Curve {self.curve_count}")
         self.update_curve_numbers()
         self.changed.emit()
 
     def remove_curve(self, index):
-        if 0 <= index < len(self.curves):
-            curve = self.curves.pop(index)
+        curve = self.curve_tabs.widget(index)
+        if curve:
+            self.curves.remove(curve)
             self.curve_tabs.removeTab(index)
             curve.deleteLater()
-            self.update_curve_numbers()
+            self.update_curve_numbers()  # Renumber remaining curves
             self.changed.emit()
-
-    def remove_curve_by_instance(self, curve):
-        if curve in self.curves:
-            index = self.curve_tabs.indexOf(curve)
-            self.remove_curve(index)
 
     def update_curve_numbers(self):
+        """Renumbers curves after a deletion or addition."""
         for i, curve in enumerate(self.curves, start=1):
             curve.curve_label.setText(f"Curve {i}:")
-            self.curve_tabs.setTabText(self.curve_tabs.indexOf(curve), f"Curve {i}")
+            self.curve_tabs.setTabText(i - 1, f"Curve {i}")
 
-    def select_bg_color(self):
-        color = QColorDialog.getColor()
-        if color.isValid():
-            self.bg_color = color.name()
-            self.bg_color_btn.setStyleSheet(f"background-color: {self.bg_color};")
-            self.changed.emit()
-
-# --- EditCurveDialog remains unchanged ---
-class EditCurveDialog(QDialog):
-    def __init__(self, track, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Edit Track Properties")
-        self.setLayout(QVBoxLayout())
-        form_layout = QFormLayout()
-        self.layout().addLayout(form_layout)
-        self.grid = QCheckBox("Grid")
-        self.grid.setChecked(track.grid.isChecked())
-        form_layout.addRow(self.grid)
-        self.flip = QCheckBox("Flip X-Axis")
-        self.flip.setChecked(False)
-        form_layout.addRow(self.flip)
-        self.flip_y = QCheckBox("Flip Y-Axis")
-        self.flip_y.setChecked(track.flip_y.isChecked())
-        form_layout.addRow(self.flip_y)
-        self.bg_color_btn = QPushButton("Background Color")
-        self.bg_color_btn.setStyleSheet(f"background-color: {track.bg_color}; border: none;")
-        self.bg_color_btn.clicked.connect(self.select_bg_color)
-        form_layout.addRow(self.bg_color_btn)
-        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.buttons.accepted.connect(self.accept)
-        self.buttons.rejected.connect(self.reject)
-        self.layout().addWidget(self.buttons)
-        self.bg_color = track.bg_color
-
-    def select_bg_color(self):
-        color = QColorDialog.getColor()
-        if color.isValid():
-            self.bg_color = color.name()
-
-    def accept(self):
-        self.grid_state = self.grid.isChecked()
-        self.flip_state = self.flip.isChecked()
-        self.flip_y_state = self.flip_y.isChecked()
-        super().accept()
-
-# --- WellLogViewer with updated well tops functionality ---
 class WellLogViewer(QMainWindow):
     def __init__(self):
         super().__init__()
         self.wells = {}
-        self.well_tops = {}       # {well: [(top, md), ...]}
-        # Remove or ignore self.selected_well_tops if present.
-        self.selected_top_names = set()  # NEW: Holds unique top names that are selected.
+        self.well_tops = {}
+        self.selected_top_names = set()
         self.tracks = []
         self.figure_widgets = {}
+        self.show_well_tops = True  # New attribute to track well top visibility
         self.initUI()
-        self.setWindowIcon(QIcon('Icons/ongc.png'))
-
+        self.setWindowIcon(QIcon('images/ONGC_Logo.png'))
 
     def initUI(self):
         self.setWindowTitle('Well Log Viewer')
         self.setGeometry(100, 100, 1200, 800)
+
         self.figure_scroll = QScrollArea()
         self.figure_container = QWidget()
         self.figure_layout = QHBoxLayout(self.figure_container)
         self.figure_scroll.setWidgetResizable(True)
         self.figure_scroll.setWidget(self.figure_container)
         self.setCentralWidget(self.figure_scroll)
+
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
-        load_folder_action = QAction("Load LAS Files", self)
+
+        load_folder_action = QAction("Load LAS Folder", self)
         load_folder_action.triggered.connect(self.load_las_folder)
         file_menu.addAction(load_folder_action)
-
 
         load_files_action = QAction("Load LAS Files", self)
         load_files_action.triggered.connect(self.load_las_files)
@@ -386,55 +456,101 @@ class WellLogViewer(QMainWindow):
         load_welltops_action = QAction("Load Well Tops", self)
         load_welltops_action.triggered.connect(self.load_well_tops)
         file_menu.addAction(load_welltops_action)
+
+        settings_menu = menubar.addMenu("Settings")
+
+        save_template_action = QAction("Save Template", self)
+        save_template_action.triggered.connect(self.save_template)
+        settings_menu.addAction(save_template_action)
+
+        load_template_action = QAction("Load Template", self)
+        load_template_action.triggered.connect(self.load_template)
+        settings_menu.addAction(load_template_action)
+
         toggle_controls_action = QAction("Toggle Controls", self)
         toggle_controls_action.triggered.connect(self.toggle_controls)
         menubar.addAction(toggle_controls_action)
-        theme_menu = menubar.addMenu("Themes")
-        dark_mode_action = QAction("Dark Mode", self)
-        dark_mode_action.triggered.connect(lambda: self.set_theme("styles/darkmode.qss"))
-        light_mode_action = QAction("Light Mode", self)
-        light_mode_action.triggered.connect(lambda: self.set_theme("styles/lightmode.qss"))
-        theme_menu.addAction(dark_mode_action)
-        theme_menu.addAction(light_mode_action)
-        self.dock = QDockWidget("Control Panel", self)
+
+        change_bg_action = QAction("Change Bg Color", self)
+        change_bg_action.triggered.connect(self.change_background_color)
+        menubar.addAction(change_bg_action)
+
+        # New action: Toggle Well Tops Visibility
+        self.toggle_well_tops_action = QAction("Hide Well Tops", self)
+        self.toggle_well_tops_action.triggered.connect(self.toggle_well_tops)
+        menubar.addAction(self.toggle_well_tops_action)
+
+        self.dock = QDockWidget("Control", self)
+        self.dock.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt;")
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
+
         dock_widget = QWidget()
         dock_layout = QVBoxLayout()
         list_layout = QHBoxLayout()
-        # Loaded Wells list.
+
         self.well_list = ClickableListWidget()
         self.well_list.itemChanged.connect(self.update_plot)
-        well_label = QLabel("Loaded Wells:")
+        well_label = QLabel("Wells:")
         well_layout = QVBoxLayout()
         well_layout.addWidget(well_label)
         well_layout.addWidget(self.well_list)
         list_layout.addLayout(well_layout)
-        # Loaded Well Tops list (shows only top names).
-        self.well_tops_list = QListWidget()
+
+        self.well_tops_list = ClickableListWidget()
         self.well_tops_list.itemChanged.connect(self.well_top_item_changed)
-        welltops_label = QLabel("Loaded Well Tops:")
+        welltops_label = QLabel("Well Tops:")
         welltops_layout = QVBoxLayout()
         welltops_layout.addWidget(welltops_label)
         welltops_layout.addWidget(self.well_tops_list)
         list_layout.addLayout(welltops_layout)
         dock_layout.addLayout(list_layout)
-        btn_add_track = QPushButton("Track")
-        btn_add_track.setToolTip("Add Track")
-        btn_add_track.setIcon(QIcon("Icons/plus.png"))
-        btn_add_track.setLayoutDirection(Qt.RightToLeft)
-        btn_add_track.setObjectName("btnAddTrack")
+
+        btn_add_track = QPushButton("Track +")
+        btn_add_track.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 15pt; font-weight: bold;")
         btn_add_track.clicked.connect(self.add_track)
         dock_layout.addWidget(btn_add_track)
+
         self.track_tabs = QTabWidget()
-        self.track_tabs.setObjectName("trackTabs")
+        self.track_tabs.setStyleSheet("background-color: #e2e2e2; border-radius: 5px; color: #53003e; font: 10pt;")
         self.track_tabs.setTabsClosable(True)
         self.track_tabs.tabCloseRequested.connect(self.delete_track)
         dock_layout.addWidget(self.track_tabs)
+
         dock_widget.setLayout(dock_layout)
         self.dock.setWidget(dock_widget)
 
-    def set_theme(self, theme_file):
-        QApplication.instance().setStyleSheet(loadStyleSheet(theme_file))
+    def toggle_well_tops(self):
+        """Toggle the visibility of well tops."""
+        self.show_well_tops = not self.show_well_tops
+        self.toggle_well_tops_action.setText("Hide Well Tops" if self.show_well_tops else "Show Well Tops")
+        self.update_plot()
+
+    def update_plot(self):
+        selected_wells = [self.well_list.item(i).text() for i in range(self.well_list.count())
+                        if self.well_list.item(i).checkState() == Qt.Checked]
+        for well in selected_wells:
+            if well not in self.figure_widgets:
+                self.figure_widgets[well] = FigureWidget(well)
+                self.figure_layout.addWidget(self.figure_widgets[well])
+            well_top_lines = []
+            if well in self.well_tops and self.show_well_tops:
+                for top, md in self.well_tops[well]:
+                    if top in self.selected_top_names:
+                        well_top_lines.append((top, md))
+            self.figure_widgets[well].update_plot(self.wells[well]['data'], self.tracks, well_top_lines)
+        for well in list(self.figure_widgets.keys()):
+            if well not in selected_wells:
+                widget = self.figure_widgets[well]
+                self.figure_layout.removeWidget(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+                del self.figure_widgets[well]
+
+    def change_background_color(self):
+        """Opens a color picker to change the background color."""
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.setStyleSheet(f"QWidget {{ background-color: {color.name()}; }}")
 
     def toggle_controls(self):
         self.dock.setVisible(not self.dock.isVisible())
@@ -483,28 +599,51 @@ class WellLogViewer(QMainWindow):
         if not file_path:
             return
         try:
-            # Read the file with whitespace delimiter and no header.
+            # Determine the delimiter based on file content
+            delimiter = ','
+            if file_path.endswith('.txt'):
+                with open(file_path, 'r') as file:
+                    lines = file.readlines()
+                    has_comma = any(',' in line for line in lines)
+                    has_avlevel = any('avlevel' in line.lower() for line in lines)
+
+                    # Adjust delimiter if avlevel and comma are found
+                    if has_comma and has_avlevel:
+                        delimiter = ','
+                    else:
+                        delimiter = None
+
+            # Read the file with the appropriate delimiter
             df = pd.read_csv(
                 file_path,
-                delim_whitespace=True,
+                delimiter=delimiter,
+                delim_whitespace=True if delimiter is None else False,
                 header=None,
                 engine='python',
                 on_bad_lines='skip'
             )
+
             # Determine common number of columns.
             num_cols = df.apply(lambda row: row.count(), axis=1).mode()[0]
             df = df.iloc[:, :num_cols]
+
             # Check for header by trying to convert third column to float.
             header_present = False
             try:
                 float(df.iloc[0, 2])
             except ValueError:
                 header_present = True
+
             if header_present:
                 df = df.drop(0).reset_index(drop=True)
+
+            # Trim to the first three columns if necessary
             if df.shape[1] > 3:
                 df = df.iloc[:, :3]
+
             df.columns = ["well", "top", "md"]
+
+            # Process well tops
             for idx, row in df.iterrows():
                 well = str(row["well"]).strip()
                 top = str(row["top"]).strip()
@@ -516,6 +655,7 @@ class WellLogViewer(QMainWindow):
                     self.well_tops[well] = []
                 self.well_tops[well].append((top, md))
             self.update_well_tops_list()
+
         except Exception as e:
             print(f"Error loading well tops from {file_path}: {str(e)}")
 
@@ -548,12 +688,13 @@ class WellLogViewer(QMainWindow):
     def add_track(self):
         if not self.wells:
             return
+
         curves = sorted(set(curve for well in self.wells.values() for curve in well['data'].columns))
         track = TrackControl(len(self.tracks) + 1, curves)
         track.changed.connect(self.update_plot)
-        track.deleteRequested.connect(self.delete_track)
         self.tracks.append(track)
         self.track_tabs.addTab(track, f"Track {track.number}")
+
         self.update_plot()
 
     def delete_track(self, index):
@@ -566,50 +707,107 @@ class WellLogViewer(QMainWindow):
             self.update_plot()
 
     def renumber_tracks(self):
+        """Renumber tracks and update their tab titles."""
         for i, track in enumerate(self.tracks, start=1):
             track.number = i
-            track.update_curve_numbers()
+            track.update_curve_numbers()  # Renumber curves within the track
             self.track_tabs.setTabText(i - 1, f"Track {i}")
 
-    def update_plot(self):
-        selected_wells = [self.well_list.item(i).text() for i in range(self.well_list.count())
-                        if self.well_list.item(i).checkState() == Qt.Checked]
-        for well in selected_wells:
-            if well not in self.figure_widgets:
-                self.figure_widgets[well] = FigureWidget(well)
-                self.figure_layout.addWidget(self.figure_widgets[well])
-                self.figure_widgets[well].curve_clicked.connect(self.open_edit_curve_dialog)
-                self.figure_widgets[well].track_clicked.connect(self.open_edit_track_dialog)
-            # Build list of (top, md) pairs for this well if the top is selected.
-            well_top_lines = []
-            if well in self.well_tops:
-                for top, md in self.well_tops[well]:
-                    if top in self.selected_top_names:
-                        well_top_lines.append((top, md))
-            self.figure_widgets[well].update_plot(self.wells[well]['data'], self.tracks, well_top_lines)
-        for well in list(self.figure_widgets.keys()):
-            if well not in selected_wells:
-                widget = self.figure_widgets[well]
-                self.figure_layout.removeWidget(widget)
-                widget.setParent(None)
-                widget.deleteLater()
-                del self.figure_widgets[well]
+    def save_template(self):
+        """Save the current template settings to a .pkl file."""
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Template", "", "Template Files (*.pkl)")
+        if file_path:
+            template_data = {
+                'tracks': [track.number for track in self.tracks],
+                'track_settings': [self.get_track_settings(track) for track in self.tracks],
+                'selected_wells': [self.well_list.item(i).text() for i in range(self.well_list.count())
+                                   if self.well_list.item(i).checkState() == Qt.Checked],
+                'selected_top_names': list(self.selected_top_names)
+            }
+            with open(file_path, 'wb') as f:
+                pickle.dump(template_data, f)
 
-    def open_edit_curve_dialog(self, curve_name, curve):
-        available_curves = sorted(set(curve for well in self.wells.values() for curve in well['data'].columns))
-        dialog = EditCurveDialog(curve, self)
-        if dialog.exec_():
-            curve.changed.emit()
-            self.update_plot()
+    def load_template(self):
+        """Load template settings from a .pkl file."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Template", "", "Template Files (*.pkl)")
+        if file_path:
+            with open(file_path, 'rb') as f:
+                template_data = pickle.load(f)
+            self.apply_template(template_data)
 
-    def open_edit_track_dialog(self, track):
-        dialog = EditCurveDialog(track, self)
-        if dialog.exec_():
-            track.grid.setChecked(dialog.grid_state)
-            track.flip.setChecked(dialog.flip_state)
-            track.flip_y.setChecked(dialog.flip_y_state)
-            track.bg_color = dialog.bg_color
-            track.changed.emit()
+    def get_track_settings(self, track):
+        """Get the settings of a track."""
+        return {
+            'bg_color': track.bg_color,
+            'grid': track.grid.isChecked(),
+            'flip_y': track.flip_y.isChecked(),
+            'y_min': track.y_min.text(),
+            'y_max': track.y_max.text(),
+            'curves': [self.get_curve_settings(curve) for curve in track.curves]
+        }
+
+    def get_curve_settings(self, curve):
+        """Get the settings of a curve."""
+        return {
+            'curve_name': curve.curve_box.currentText(),
+            'width': curve.width.value(),
+            'color': curve.color,
+            'line_style': curve.get_line_style(),
+            'flip': curve.flip.isChecked(),
+            'x_min': curve.x_min.text(),
+            'x_max': curve.x_max.text(),
+            'scale': curve.scale_combobox.currentText()
+        }
+
+    def apply_template(self, template_data):
+        """Apply the template settings."""
+        # Clear existing tracks
+        while self.track_tabs.count() > 0:
+            self.delete_track(0)
+
+        # Load tracks
+        for track_number, track_settings in zip(template_data['tracks'], template_data['track_settings']):
+            curves = sorted(set(curve for well in self.wells.values() for curve in well['data'].columns))
+            track = TrackControl(track_number, curves)
+            track.bg_color = track_settings['bg_color']
+            track.bg_color_btn.setStyleSheet(f"background-color: {track.bg_color}; border: none;")
+            track.grid.setChecked(track_settings['grid'])
+            track.flip_y.setChecked(track_settings['flip_y'])
+            track.y_min.setText(track_settings['y_min'])
+            track.y_max.setText(track_settings['y_max'])
+            track.changed.connect(self.update_plot)
+            self.tracks.append(track)
+            self.track_tabs.addTab(track, f"Track {track.number}")
+
+            # Load curves
+            for curve_settings in track_settings['curves']:
+                curve = CurveControl(len(track.curves) + 1, curves)
+                curve.curve_box.setCurrentText(curve_settings['curve_name'])
+                curve.width.setValue(curve_settings['width'])
+                curve.color = curve_settings['color']
+                curve.color_btn.setStyleSheet(f"background-color: {curve.color}; border: none;")
+                curve.line_style_box.setCurrentText(curve_settings['line_style'])
+                curve.flip.setChecked(curve_settings['flip'])
+                curve.x_min.setText(curve_settings['x_min'])
+                curve.x_max.setText(curve_settings['x_max'])
+                curve.scale_combobox.setCurrentText(curve_settings['scale'])
+                curve.changed.connect(track.changed.emit)
+                track.curves.append(curve)
+                track.curve_tabs.addTab(curve, f"Curve {len(track.curves)}")
+
+        # Select wells
+        for well_name in template_data['selected_wells']:
+            for i in range(self.well_list.count()):
+                if self.well_list.item(i).text() == well_name:
+                    self.well_list.item(i).setCheckState(Qt.Checked)
+
+        # Select top names
+        for top_name in template_data['selected_top_names']:
+            for i in range(self.well_tops_list.count()):
+                if self.well_tops_list.item(i).data(Qt.UserRole) == top_name:
+                    self.well_tops_list.item(i).setCheckState(Qt.Checked)
+
+        self.update_plot()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

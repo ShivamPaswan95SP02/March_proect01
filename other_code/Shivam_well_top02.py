@@ -75,10 +75,13 @@ class FigureWidget(QWidget):
         self.remove_crosshair()
         self.crosshair_vline = ax.axvline(x, color='red', linestyle='--', linewidth=1)
 
-        # Add horizontal crosshair lines to all subplots in the current figure
-        for sub_ax in self.figure.get_axes():
-            hline = sub_ax.axhline(y, color='red', linestyle='--', linewidth=1)
-            self.crosshair_hlines.append(hline)
+        # Access the WellLogViewer instance to iterate over all figure widgets
+        main_window = self.window()
+        if isinstance(main_window, WellLogViewer):
+            for well_name, figure_widget in main_window.figure_widgets.items():
+                for sub_ax in figure_widget.figure.get_axes():
+                    hline = sub_ax.axhline(y, color='red', linestyle='--', linewidth=1)
+                    self.crosshair_hlines.append(hline)
 
         self.cursor_coords = ax.text(0.05, 0.95, f'x={x:.2f}, y={y:.2f}',
                                      transform=ax.transAxes, fontsize=9,
@@ -616,7 +619,7 @@ class WellLogViewer(QMainWindow):
             return
         try:
 
-            #Determine the delimiter based on file content
+            # Determine the delimiter based on file content
             delimiter = ','
             if file_path.endswith('.txt'):
                 with open(file_path, 'r') as file:
@@ -631,7 +634,6 @@ class WellLogViewer(QMainWindow):
                                 engine='python',
                                 on_bad_lines='skip')
                     else:
-                        #delimiter = None
                         # Read the file with the appropriate delimiter
                         df = pd.read_csv(
                             file_path,

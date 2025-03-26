@@ -14,6 +14,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 
 # Update the overall font size on plots
 plt.rcParams.update({'font.size': 8.5})
@@ -47,62 +48,20 @@ class FigureWidget(QWidget):
     def __init__(self, well_name, parent=None):
         super().__init__(parent)
         self.well_name = well_name
-        self.figure = Figure(layout="constrained", figsize=(10, 6))  # Set a default figure size
-        self.figure.set_constrained_layout_pads(w_pad=0.1, h_pad=0.1, wspace=0.1, hspace=0.1)  # Adjust padding
+        self.figure = Figure(layout="constrained")  # Use constrained layout
+        self.figure.set_constrained_layout_pads(w_pad=0, h_pad=0, wspace=0, hspace=0)
 
         self.canvas = FigureCanvas(self.figure)
         layout = QVBoxLayout(self)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
-        self.crosshair_vline = None
-        self.crosshair_hlines = []
-        self.cursor_coords = None
-
+        self.crosshair_lines = []
         self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
-        self.canvas.mpl_connect('axes_leave_event', self.on_leave_axes)
-
-    def on_mouse_move(self, event):
-        if event.inaxes:
-            x, y = event.xdata, event.ydata
-            self.mouse_moved.emit(x, y)
-            self.update_crosshair(event.inaxes, x, y)
-
-    def on_leave_axes(self, event):
-        self.remove_crosshair()
-
-    def update_crosshair(self, ax, x, y):
-        self.remove_crosshair()
-        self.crosshair_vline = ax.axvline(x, color='red', linestyle='--', linewidth=1)
-
-        # Access the WellLogViewer instance to iterate over all figure widgets
-        main_window = self.window()
-        if isinstance(main_window, WellLogViewer):
-            for well_name, figure_widget in main_window.figure_widgets.items():
-                for sub_ax in figure_widget.figure.get_axes():
-                    hline = sub_ax.axhline(y, color='red', linestyle='--', linewidth=1)
-                    self.crosshair_hlines.append(hline)
-
-        self.cursor_coords = ax.text(0.05, 0.95, f'x={x:.2f}, y={y:.2f}',
-                                     transform=ax.transAxes, fontsize=9,
-                                     verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.5))
-        self.canvas.draw()
-
-    def remove_crosshair(self):
-        if self.crosshair_vline:
-            self.crosshair_vline.remove()
-            self.crosshair_vline = None
-        for hline in self.crosshair_hlines:
-            hline.remove()
-        self.crosshair_hlines = []
-        if self.cursor_coords:
-            self.cursor_coords.remove()
-            self.cursor_coords = None
-        self.canvas.draw()
 
     def update_plot(self, data, tracks, well_top_lines=None):
         self.figure.clear()
-        self.figure.set_constrained_layout_pads(w_pad=0.1, h_pad=0.1, wspace=0.1, hspace=0.1)  # Adjust padding
+        self.figure.set_constrained_layout_pads(w_pad=0, h_pad=0, wspace=0, hspace=0)
         self.data = data
         self.tracks = tracks
         n_tracks = len(tracks)
@@ -211,6 +170,49 @@ class FigureWidget(QWidget):
                         )
 
         self.canvas.draw()
+        self.initialize_crosshair()
+
+    def initialize_crosshair(self):
+        self.crosshair_lines = []
+        for ax in self.figure.axes:
+            hline = ax.axhline(color='r', lw=0.8, ls='--', alpha=0.7, visible=False)
+            vline = ax.axvline(color='r', lw=0.8, ls='--', alpha=0.7, visible=False)
+            self.crosshair_lines.append((hline, vline))
+
+    def on_mouse_move(self, event):
+        if event.inaxes is None:
+            # Hide crosshair if the mouse is not in any subplot
+            for hline, vline in self.crosshair_lines:
+                hline.set_visible(False)
+                vline.set_visible(True)
+        else:
+            # Update crosshair position in all subplots
+            for hline, vline in self.crosshair_lines:
+                hline.set_ydata([event.ydata, event.ydata])
+                vline.set_xdata([event.xdata, event.xdata])
+
+                # Show both lines in the current subplot, only horizontal line in others
+                if event.inaxes == hline.axes:
+                    hline.set_visible(True)
+                    vline.set_visible(False)
+                else:
+                    hline.set_visible(True)
+                    vline.set_visible(False)
+
+        # Redraw the figure
+        self.canvas.draw_idle()
+
+        # Emit signal to synchronize crosshair in other plots
+        self.mouse_moved.emit(event.xdata, event.ydata)
+
+    def update_crosshair(self, x, y):
+        """Update the crosshair position based on external signals."""
+        for hline, vline in self.crosshair_lines:
+            hline.set_ydata([y, y])
+            vline.set_xdata([x, x])
+            hline.set_visible(True)
+            vline.set_visible(True)  # Only show horizontal line
+        self.canvas.draw_idle()
 
 class CurveControl(QWidget):
     changed = pyqtSignal()
@@ -551,12 +553,19 @@ class WellLogViewer(QMainWindow):
             if well not in self.figure_widgets:
                 self.figure_widgets[well] = FigureWidget(well)
                 self.figure_layout.addWidget(self.figure_widgets[well])
+                # Connect the mouse_moved signal to update crosshair in other plots
+                self.figure_widgets[well].mouse_moved.connect(self.synchronize_crosshair)
             well_top_lines = []
             if well in self.well_tops and self.show_well_tops:
                 for top, md in self.well_tops[well]:
                     if top in self.selected_top_names:
                         well_top_lines.append((top, md))
             self.figure_widgets[well].update_plot(self.wells[well]['data'], self.tracks, well_top_lines)
+
+        # Redraw all wells
+        for well in self.figure_widgets.values():
+            well.canvas.draw_idle()
+
         for well in list(self.figure_widgets.keys()):
             if well not in selected_wells:
                 widget = self.figure_widgets[well]
@@ -564,6 +573,11 @@ class WellLogViewer(QMainWindow):
                 widget.setParent(None)
                 widget.deleteLater()
                 del self.figure_widgets[well]
+
+    def synchronize_crosshair(self, x, y):
+        """Update crosshair position in all plots."""
+        for widget in self.figure_widgets.values():
+            widget.update_crosshair(x, y)
 
     def change_background_color(self):
         """Opens a color picker to change the background color."""
@@ -619,7 +633,7 @@ class WellLogViewer(QMainWindow):
             return
         try:
 
-            # Determine the delimiter based on file content
+            #Determine the delimiter based on file content
             delimiter = ','
             if file_path.endswith('.txt'):
                 with open(file_path, 'r') as file:
@@ -634,6 +648,7 @@ class WellLogViewer(QMainWindow):
                                 engine='python',
                                 on_bad_lines='skip')
                     else:
+                        #delimiter = None
                         # Read the file with the appropriate delimiter
                         df = pd.read_csv(
                             file_path,
@@ -813,6 +828,7 @@ class WellLogViewer(QMainWindow):
                 curve.changed.connect(track.changed.emit)
                 track.curves.append(curve)
                 #track.curve_tabs.addTab(curve, f"Curve {len(track.curves)}")
+
         self.update_plot()
 
 if __name__ == "__main__":

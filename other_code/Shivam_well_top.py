@@ -48,44 +48,16 @@ class FigureWidget(QWidget):
         super().__init__(parent)
         self.well_name = well_name
         self.figure = Figure(layout="constrained")  # Use constrained layout
+        self.figure.set_constrained_layout_pads(w_pad=0, h_pad=0, wspace=0, hspace=0)
+
         self.canvas = FigureCanvas(self.figure)
-        self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
         layout = QVBoxLayout(self)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
-        # Crosshair lines
-        self.vline = None
-        self.hlines = []
-
-    def on_mouse_move(self, event):
-        if event.inaxes:
-            x, y = event.xdata, event.ydata
-            self.mouse_moved.emit(x, y)
-            self.update_crosshair(x, y)
-
-    def update_crosshair(self, x, y):
-        if self.vline is None:
-            # Initialize the vertical line on each axis
-            self.vline = [ax.axvline(x, color='green', linestyle='--') for ax in self.figure.axes]
-        else:
-            # Update the position of the vertical line on each axis
-            for ax, line in zip(self.figure.axes, self.vline):
-                line.set_xdata([x, x])  # Set x data as a sequence
-
-        for ax in self.figure.axes:
-            if ax not in [line.axes for line in self.hlines]:
-                hline = ax.axhline(y, color='red', linestyle='--')
-                self.hlines.append(hline)
-            else:
-                for hline in self.hlines:
-                    if hline.axes == ax:
-                        hline.set_ydata([y, y])  # Set y data as a sequence
-
-        self.canvas.draw()
-
     def update_plot(self, data, tracks, well_top_lines=None):
         self.figure.clear()
+        self.figure.set_constrained_layout_pads(w_pad=0, h_pad=0, wspace=0, hspace=0)
         self.data = data
         self.tracks = tracks
         n_tracks = len(tracks)
@@ -98,6 +70,8 @@ class FigureWidget(QWidget):
 
             for idx, (ax, track) in enumerate(zip(axes, tracks)):
                 ax.set_facecolor(track.bg_color)  # Apply Background Color
+                if idx!=0:
+                    ax.tick_params(left=False, labelleft=False)
                 track.ax = ax  # Store the axis for later reference
                 valid_curves = []
                 lines_list = []
@@ -116,7 +90,7 @@ class FigureWidget(QWidget):
                     twin_ax.xaxis.set_label_position('top')
                     twin_ax.spines['top'].set_color(curve.color)
                     twin_ax.spines['top'].set_linewidth(2)
-                    twin_ax.spines['top'].set_position(('axes', 1 + i * 0.08))  # Adjust the gap here
+                    twin_ax.spines['top'].set_position(('axes', 1 + i * 0.025))  # Adjust the gap here
                     twin_ax.tick_params(axis='x', colors=curve.color)
                     twin_ax.set_xlabel(curve_name, color=curve.color)
 
@@ -599,29 +573,31 @@ class WellLogViewer(QMainWindow):
         if not file_path:
             return
         try:
-            # Determine the delimiter based on file content
+           
+
+            #Determine the delimiter based on file content
             delimiter = ','
             if file_path.endswith('.txt'):
                 with open(file_path, 'r') as file:
                     lines = file.readlines()
                     has_comma = any(',' in line for line in lines)
-                    has_avlevel = any('avlevel' in line.lower() for line in lines)
 
-                    # Adjust delimiter if avlevel and comma are found
-                    if has_comma and has_avlevel:
-                        delimiter = ','
+                    if has_comma: 
+                        df = pd.read_csv(
+                                file_path,
+                                delimiter=',',
+                                header=None,
+                                engine='python',
+                                on_bad_lines='skip')
                     else:
-                        delimiter = None
-
-            # Read the file with the appropriate delimiter
-            df = pd.read_csv(
-                file_path,
-                delimiter=delimiter,
-                delim_whitespace=True if delimiter is None else False,
-                header=None,
-                engine='python',
-                on_bad_lines='skip'
-            )
+                        #delimiter = None
+                        # Read the file with the appropriate delimiter
+                        df = pd.read_csv(
+                            file_path,
+                            delim_whitespace=True,# if delimiter is None else False,
+                            header=None,
+                            engine='python',
+                            on_bad_lines='skip')
 
             # Determine common number of columns.
             num_cols = df.apply(lambda row: row.count(), axis=1).mode()[0]
@@ -636,11 +612,11 @@ class WellLogViewer(QMainWindow):
 
             if header_present:
                 df = df.drop(0).reset_index(drop=True)
-
+            
             # Trim to the first three columns if necessary
             if df.shape[1] > 3:
                 df = df.iloc[:, :3]
-
+                
             df.columns = ["well", "top", "md"]
 
             # Process well tops
@@ -658,6 +634,7 @@ class WellLogViewer(QMainWindow):
 
         except Exception as e:
             print(f"Error loading well tops from {file_path}: {str(e)}")
+
 
     def update_well_tops_list(self):
         self.well_tops_list.clear()
@@ -717,12 +694,12 @@ class WellLogViewer(QMainWindow):
         """Save the current template settings to a .pkl file."""
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Template", "", "Template Files (*.pkl)")
         if file_path:
+            file_path = file_path+".pkl"
+            print(file_path)
             template_data = {
                 'tracks': [track.number for track in self.tracks],
-                'track_settings': [self.get_track_settings(track) for track in self.tracks],
-                'selected_wells': [self.well_list.item(i).text() for i in range(self.well_list.count())
-                                   if self.well_list.item(i).checkState() == Qt.Checked],
-                'selected_top_names': list(self.selected_top_names)
+                'track_settings': [self.get_track_settings(track) for track in self.tracks]
+
             }
             with open(file_path, 'wb') as f:
                 pickle.dump(template_data, f)
@@ -749,7 +726,7 @@ class WellLogViewer(QMainWindow):
     def get_curve_settings(self, curve):
         """Get the settings of a curve."""
         return {
-            'curve_name': curve.curve_box.currentText(),
+            #'curve_name': curve.curve_box.currentText(),
             'width': curve.width.value(),
             'color': curve.color,
             'line_style': curve.get_line_style(),
@@ -778,11 +755,11 @@ class WellLogViewer(QMainWindow):
             track.changed.connect(self.update_plot)
             self.tracks.append(track)
             self.track_tabs.addTab(track, f"Track {track.number}")
-
+        print('Track',track_settings)
             # Load curves
-            for curve_settings in track_settings['curves']:
+        for curve_settings in track_settings['curves']:
                 curve = CurveControl(len(track.curves) + 1, curves)
-                curve.curve_box.setCurrentText(curve_settings['curve_name'])
+                #curve.curve_box.setCurrentText(curve_settings['curve_name'])
                 curve.width.setValue(curve_settings['width'])
                 curve.color = curve_settings['color']
                 curve.color_btn.setStyleSheet(f"background-color: {curve.color}; border: none;")
@@ -793,20 +770,7 @@ class WellLogViewer(QMainWindow):
                 curve.scale_combobox.setCurrentText(curve_settings['scale'])
                 curve.changed.connect(track.changed.emit)
                 track.curves.append(curve)
-                track.curve_tabs.addTab(curve, f"Curve {len(track.curves)}")
-
-        # Select wells
-        for well_name in template_data['selected_wells']:
-            for i in range(self.well_list.count()):
-                if self.well_list.item(i).text() == well_name:
-                    self.well_list.item(i).setCheckState(Qt.Checked)
-
-        # Select top names
-        for top_name in template_data['selected_top_names']:
-            for i in range(self.well_tops_list.count()):
-                if self.well_tops_list.item(i).data(Qt.UserRole) == top_name:
-                    self.well_tops_list.item(i).setCheckState(Qt.Checked)
-
+                #track.curve_tabs.addTab(curve, f"Curve {len(track.curves)}")
         self.update_plot()
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QMenu, QVBoxLayout, QFormLayout, QLabel, QLineEdit,
     QDialogButtonBox, QMainWindow, QDockWidget, QListWidget,
     QListWidgetItem, QWidget, QComboBox, QPushButton, QCheckBox, QSpinBox,
-    QScrollArea, QAction, QColorDialog, QTabWidget, QFrame, QApplication
+    QScrollArea, QAction, QColorDialog, QTabWidget, QFrame, QApplication, QToolBar
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -15,6 +15,7 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+from matplotlib.patches import Rectangle
 
 # Update the overall font size on plots
 plt.rcParams.update({'font.size': 8.5})
@@ -44,6 +45,8 @@ class ClickableListWidget(QListWidget):
 
 class FigureWidget(QWidget):
     mouse_moved = pyqtSignal(float, float)
+    external_crosshair = pyqtSignal(float, float)
+    zoomChanged = pyqtSignal(object)  # Signal emitted after a zoom event
 
     def __init__(self, well_name, parent=None):
         super().__init__(parent)
@@ -56,8 +59,205 @@ class FigureWidget(QWidget):
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
-        self.crosshair_lines = []
+        self.crosshair_hlines = []
+        self.crosshair_vline = None
+        self.cursor_coords = None
+
         self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
+        self.external_crosshair.connect(self.on_external_crosshair)
+
+        # Variables for custom zoom/pan.
+        self._dragging = False
+        self._press_event = None
+        self._rect = None  # For rectangular zoom
+        self._zoom_history = []  # Stack to store zoom states
+
+        # Connect mouse events.
+        self.canvas.mpl_connect("button_press_event", self.onMousePress)
+        self.canvas.mpl_connect("motion_notify_event", self.onMouseMove)
+        self.canvas.mpl_connect("button_release_event", self.onMouseRelease)
+        self.canvas.mpl_connect("scroll_event", self.onScroll)
+
+    def onZoomModeChanged(self, mode):
+        self.zoom_mode = mode
+        if mode == "Pan":
+            self.canvas.setCursor(Qt.OpenHandCursor)
+        elif mode == "Rectangular":
+            self.canvas.setCursor(Qt.CrossCursor)
+        elif mode == "Horizontal":
+            self.canvas.setCursor(Qt.SizeHorCursor)
+        elif mode == "Vertical":
+            self.canvas.setCursor(Qt.SizeVerCursor)
+        else:
+            self.canvas.setCursor(Qt.ArrowCursor)
+
+    def onMousePress(self, event):
+        if event.inaxes is None:
+            return
+        if self.zoom_mode == "Rectangular":
+            self._dragging = True
+            self._press_event = event
+            ax = event.inaxes
+            self._rect = Rectangle((event.xdata, event.ydata), 0, 0,
+                                   fill=False, edgecolor='red', linestyle='--')
+            ax.add_patch(self._rect)
+            self.canvas.draw()
+        elif self.zoom_mode == "Pan":
+            self._dragging = True
+            self._press_event = event
+
+    def onMouseMove(self, event):
+        if not self._dragging or event.inaxes is None or self._press_event is None:
+            return
+        ax = event.inaxes
+        if self.zoom_mode == "Pan":
+            dx = event.xdata - self._press_event.xdata
+            dy = event.ydata - self._press_event.ydata
+            if event.key == "control":
+                y0, y1 = ax.get_ylim()
+                ax.set_ylim(y0 - dy, y1 - dy)
+            else:
+                x0, x1 = ax.get_xlim()
+                ax.set_xlim(x0 - dx, x1 - dx)
+            self.canvas.draw()
+            self._press_event = event
+        elif self.zoom_mode == "Rectangular" and self._rect is not None:
+            x0, y0 = self._press_event.xdata, self._press_event.ydata
+            x1, y1 = event.xdata, event.ydata
+            xmin = min(x0, x1)
+            ymin = min(y0, y1)
+            width = abs(x1 - x0)
+            height = abs(y1 - y0)
+            self._rect.set_xy((xmin, ymin))
+            self._rect.set_width(width)
+            self._rect.set_height(height)
+            self.canvas.draw()
+
+    def onMouseRelease(self, event):
+        if not self._dragging or event.inaxes is None:
+            return
+        ax = event.inaxes
+        if self.zoom_mode == "Rectangular" and self._rect is not None:
+            x0, y0 = self._press_event.xdata, self._press_event.ydata
+            x1, y1 = event.xdata, event.ydata
+            xmin, xmax = sorted([x0, x1])
+            ymin, ymax = sorted([y0, y1])
+            ax.set_xlim(xmin, xmax)
+            ax.set_ylim(ymin, ymax)
+            self._rect.remove()
+            self._rect = None
+            self.canvas.draw()
+        self._dragging = False
+        self._press_event = None
+        self.recordZoomState()
+        self.zoomChanged.emit(self)
+
+    def onScroll(self, event):
+        if event.inaxes is None:
+            return
+        ax = event.inaxes
+        base_scale = 1.1
+        if event.button == "up":
+            scale_factor = 1 / base_scale
+        elif event.button == "down":
+            scale_factor = base_scale
+        else:
+            scale_factor = 1
+
+        if self.zoom_mode == "Horizontal":
+            if event.key == "control":
+                y0, y1 = ax.get_ylim()
+                ydata = event.ydata
+                new_range = (y1 - y0) * scale_factor
+                ax.set_ylim([ydata - new_range / 2, ydata + new_range / 2])
+            else:
+                x0, x1 = ax.get_xlim()
+                xdata = event.xdata
+                new_range = (x1 - x0) * scale_factor
+                ax.set_xlim([xdata - new_range / 2, xdata + new_range / 2])
+            self.canvas.draw()
+        elif self.zoom_mode == "Vertical":
+            if event.key == "control":
+                x0, x1 = ax.get_xlim()
+                xdata = event.xdata
+                new_range = (x1 - x0) * scale_factor
+                ax.set_xlim([xdata - new_range / 2, xdata + new_range / 2])
+            else:
+                y0, y1 = ax.get_ylim()
+                ydata = event.ydata
+                new_range = (y1 - y0) * scale_factor
+                ax.set_ylim([ydata - new_range / 2, ydata + new_range / 2])
+            self.canvas.draw()
+        else:
+            self.canvas.draw()
+        self.recordZoomState()
+        self.zoomChanged.emit(self)
+
+    def recordZoomState(self):
+        state = []
+        for ax in self.figure.axes:
+            state.append((ax.get_xlim(), ax.get_ylim()))
+        self._zoom_history.append(state)
+
+    def undoZoom(self):
+        if len(self._zoom_history) > 1:
+            self._zoom_history.pop()
+            prev_state = self._zoom_history[-1]
+            for ax, limits in zip(self.figure.axes, prev_state):
+                ax.set_xlim(limits[0])
+                ax.set_ylim(limits[1])
+            self.canvas.draw()
+
+    def resetZoom(self):
+        if not hasattr(self, '_initial_limits'):
+            return
+        for ax, limits in zip(self.figure.axes, self._initial_limits):
+            ax.set_xlim(limits[0])
+            ax.set_ylim(limits[1])
+        self.canvas.draw()
+        self._zoom_history = [self._initial_limits.copy()]
+
+    def on_mouse_move(self, event):
+        if event.inaxes:
+            x, y = event.xdata, event.ydata
+            self.mouse_moved.emit(x, y)
+            self.update_crosshair(event.inaxes, x, y)
+
+    def on_external_crosshair(self, x, y):
+        # Find the first axes to use for positioning
+        axes = self.figure.get_axes()
+        if axes:
+            self.update_crosshair(axes[0], x, y, external=True)
+
+    def update_crosshair(self, ax, x, y, external=False):
+        self.remove_crosshair()
+
+        # Add horizontal crosshair lines to all subplots in the current figure
+        for sub_ax in self.figure.get_axes():
+            hline = sub_ax.axhline(y, color='red', linestyle='--', linewidth=1)
+            self.crosshair_hlines.append(hline)
+
+        # Add vertical crosshair line only to the current axis if not an external signal
+        if ax and not external:
+            self.crosshair_vline = ax.axvline(x, color='red', linestyle='--', linewidth=1)
+
+        if not external:
+            self.cursor_coords = ax.text(0.05, 0.95, f'x={x:.2f}, y={y:.2f}',
+                                         transform=ax.transAxes, fontsize=9,
+                                         verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.5))
+        self.canvas.draw()
+
+    def remove_crosshair(self):
+        if self.crosshair_vline:
+            self.crosshair_vline.remove()
+            self.crosshair_vline = None
+        for hline in self.crosshair_hlines:
+            hline.remove()
+        self.crosshair_hlines = []
+        if self.cursor_coords:
+            self.cursor_coords.remove()
+            self.cursor_coords = None
+        self.canvas.draw()
 
     def update_plot(self, data, tracks, well_top_lines=None):
         self.figure.clear()
@@ -170,49 +370,13 @@ class FigureWidget(QWidget):
                         )
 
         self.canvas.draw()
-        self.initialize_crosshair()
-
-    def initialize_crosshair(self):
-        self.crosshair_lines = []
+        self._initial_limits = []
+        state = []
         for ax in self.figure.axes:
-            hline = ax.axhline(color='r', lw=0.8, ls='--', alpha=0.7, visible=False)
-            vline = ax.axvline(color='r', lw=0.8, ls='--', alpha=0.7, visible=False)
-            self.crosshair_lines.append((hline, vline))
-
-    def on_mouse_move(self, event):
-        if event.inaxes is None:
-            # Hide crosshair if the mouse is not in any subplot
-            for hline, vline in self.crosshair_lines:
-                hline.set_visible(False)
-                vline.set_visible(True)
-        else:
-            # Update crosshair position in all subplots
-            for hline, vline in self.crosshair_lines:
-                hline.set_ydata([event.ydata, event.ydata])
-                vline.set_xdata([event.xdata, event.xdata])
-
-                # Show both lines in the current subplot, only horizontal line in others
-                if event.inaxes == hline.axes:
-                    hline.set_visible(True)
-                    vline.set_visible(False)
-                else:
-                    hline.set_visible(True)
-                    vline.set_visible(False)
-
-        # Redraw the figure
-        self.canvas.draw_idle()
-
-        # Emit signal to synchronize crosshair in other plots
-        self.mouse_moved.emit(event.xdata, event.ydata)
-
-    def update_crosshair(self, x, y):
-        """Update the crosshair position based on external signals."""
-        for hline, vline in self.crosshair_lines:
-            hline.set_ydata([y, y])
-            vline.set_xdata([x, x])
-            hline.set_visible(True)
-            vline.set_visible(True)  # Only show horizontal line
-        self.canvas.draw_idle()
+            limits = (ax.get_xlim(), ax.get_ylim())
+            self._initial_limits.append(limits)
+            state.append(limits)
+        self._zoom_history = [state]
 
 class CurveControl(QWidget):
     changed = pyqtSignal()
@@ -449,6 +613,7 @@ class WellLogViewer(QMainWindow):
         self.tracks = []
         self.figure_widgets = {}
         self.show_well_tops = True  # New attribute to track well top visibility
+        self.sync_zoom_enabled = False
         self.initUI()
         self.setWindowIcon(QIcon('images/ONGC_Logo.png'))
 
@@ -465,10 +630,6 @@ class WellLogViewer(QMainWindow):
 
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
-
-        load_folder_action = QAction("Load LAS Folder", self)
-        load_folder_action.triggered.connect(self.load_las_folder)
-        file_menu.addAction(load_folder_action)
 
         load_files_action = QAction("Load LAS Files", self)
         load_files_action.triggered.connect(self.load_las_files)
@@ -500,6 +661,32 @@ class WellLogViewer(QMainWindow):
         self.toggle_well_tops_action = QAction("Hide Well Tops", self)
         self.toggle_well_tops_action.triggered.connect(self.toggle_well_tops)
         menubar.addAction(self.toggle_well_tops_action)
+
+        # Toolbar for global zoom controls.
+        self.toolbar = QToolBar("Zoom Controls", self)
+        self.addToolBar(Qt.TopToolBarArea, self.toolbar)
+        spacer = QWidget()
+        spacer.setFixedWidth(20)
+        self.toolbar.addWidget(spacer)
+        self.globalZoomCombo = QComboBox()
+        self.globalZoomCombo.addItems(["Pan", "Rectangular", "Horizontal", "Vertical"])
+        self.globalZoomCombo.currentTextChanged.connect(self.onGlobalZoomModeChanged)
+        self.toolbar.addWidget(QLabel("Global Zoom Mode: "))
+        self.toolbar.addWidget(self.globalZoomCombo)
+        spacer = QWidget()
+        spacer.setFixedWidth(20)
+        self.toolbar.addWidget(spacer)
+        self.syncZoomCheck = QCheckBox("Sync Zoom")
+        self.syncZoomCheck.toggled.connect(self.onSyncZoomToggled)
+        self.toolbar.addWidget(self.syncZoomCheck)
+        self.toolbar.addSeparator()
+        btn_undo_zoom = QPushButton("Undo Zoom")
+        btn_undo_zoom.clicked.connect(self.undoZoom)
+        self.toolbar.addWidget(btn_undo_zoom)
+        self.toolbar.addSeparator()
+        btn_reset_zoom = QPushButton("Reset Zoom")
+        btn_reset_zoom.clicked.connect(self.resetZoom)
+        self.toolbar.addWidget(btn_reset_zoom)
 
         self.dock = QDockWidget("Control", self)
         self.dock.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt;")
@@ -549,12 +736,25 @@ class WellLogViewer(QMainWindow):
     def update_plot(self):
         selected_wells = [self.well_list.item(i).text() for i in range(self.well_list.count())
                         if self.well_list.item(i).checkState() == Qt.Checked]
+
+        # Disconnect existing signals to prevent multiple connections
+        for widget in self.figure_widgets.values():
+            try:
+                widget.mouse_moved.disconnect()
+            except TypeError:
+                pass
+
+        # Connect signals for synchronization
         for well in selected_wells:
             if well not in self.figure_widgets:
                 self.figure_widgets[well] = FigureWidget(well)
                 self.figure_layout.addWidget(self.figure_widgets[well])
-                # Connect the mouse_moved signal to update crosshair in other plots
-                self.figure_widgets[well].mouse_moved.connect(self.synchronize_crosshair)
+
+            # Connect the mouse_moved signal to all other widgets
+            for other_well, other_widget in self.figure_widgets.items():
+                if other_well != well:
+                    self.figure_widgets[well].mouse_moved.connect(other_widget.external_crosshair)
+
             well_top_lines = []
             if well in self.well_tops and self.show_well_tops:
                 for top, md in self.well_tops[well]:
@@ -562,10 +762,7 @@ class WellLogViewer(QMainWindow):
                         well_top_lines.append((top, md))
             self.figure_widgets[well].update_plot(self.wells[well]['data'], self.tracks, well_top_lines)
 
-        # Redraw all wells
-        for well in self.figure_widgets.values():
-            well.canvas.draw_idle()
-
+        # Remove widgets for unselected wells
         for well in list(self.figure_widgets.keys()):
             if well not in selected_wells:
                 widget = self.figure_widgets[well]
@@ -573,11 +770,6 @@ class WellLogViewer(QMainWindow):
                 widget.setParent(None)
                 widget.deleteLater()
                 del self.figure_widgets[well]
-
-    def synchronize_crosshair(self, x, y):
-        """Update crosshair position in all plots."""
-        for widget in self.figure_widgets.values():
-            widget.update_crosshair(x, y)
 
     def change_background_color(self):
         """Opens a color picker to change the background color."""
@@ -588,13 +780,14 @@ class WellLogViewer(QMainWindow):
     def toggle_controls(self):
         self.dock.setVisible(not self.dock.isVisible())
 
-    def load_las_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing LAS Files")
-        if folder:
-            for filename in os.listdir(folder):
-                if filename.lower().endswith(".las"):
-                    self.load_las_file(os.path.join(folder, filename))
-            self.update_plot()
+    def onGlobalZoomModeChanged(self, mode):
+        for widget in self.figure_widgets.values():
+            widget.onZoomModeChanged(mode)
+
+    def onSyncZoomToggled(self, checked):
+        self.sync_zoom_enabled = checked
+        if checked:
+            self.sync_zoom()
 
     def load_las_files(self):
         options = QFileDialog.Options()
@@ -633,7 +826,7 @@ class WellLogViewer(QMainWindow):
             return
         try:
 
-            #Determine the delimiter based on file content
+            # Determine the delimiter based on file content
             delimiter = ','
             if file_path.endswith('.txt'):
                 with open(file_path, 'r') as file:
@@ -648,7 +841,7 @@ class WellLogViewer(QMainWindow):
                                 engine='python',
                                 on_bad_lines='skip')
                     else:
-                        #delimiter = None
+                        # delimiter = None
                         # Read the file with the appropriate delimiter
                         df = pd.read_csv(
                             file_path,
@@ -751,7 +944,7 @@ class WellLogViewer(QMainWindow):
         """Save the current template settings to a .pkl file."""
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Template", "", "Template Files (*.pkl)")
         if file_path:
-            file_path = file_path+".pkl"
+            file_path = file_path + ".pkl"
             print(file_path)
             template_data = {
                 'tracks': [track.number for track in self.tracks],
@@ -812,7 +1005,7 @@ class WellLogViewer(QMainWindow):
             track.changed.connect(self.update_plot)
             self.tracks.append(track)
             self.track_tabs.addTab(track, f"Track {track.number}")
-        print('Track',track_settings)
+        print('Track', track_settings)
             # Load curves
         for curve_settings in track_settings['curves']:
                 curve = CurveControl(len(track.curves) + 1, curves)
@@ -828,8 +1021,33 @@ class WellLogViewer(QMainWindow):
                 curve.changed.connect(track.changed.emit)
                 track.curves.append(curve)
                 #track.curve_tabs.addTab(curve, f"Curve {len(track.curves)}")
-
         self.update_plot()
+
+    def sync_zoom(self):
+        if not self.figure_widgets:
+            self.statusBar().showMessage("No figures to sync.")
+            return
+        ref_widget = list(self.figure_widgets.values())[0]
+        ref_axes = ref_widget.figure.axes
+        for widget in self.figure_widgets.values():
+            for i, ax in enumerate(widget.figure.axes):
+                if i < len(ref_axes):
+                    ax.set_xlim(ref_axes[i].get_xlim())
+                    ax.set_ylim(ref_axes[i].get_ylim())
+            widget.canvas.draw()
+        self.statusBar().showMessage("Zoom synchronized across figures.")
+
+    def handleZoomChanged(self, sender):
+        if self.sync_zoom_enabled:
+            self.sync_zoom()
+
+    def resetZoom(self):
+        for widget in self.figure_widgets.values():
+            widget.resetZoom()
+
+    def undoZoom(self):
+        for widget in self.figure_widgets.values():
+            widget.undoZoom()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

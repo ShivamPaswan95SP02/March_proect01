@@ -470,9 +470,6 @@ class WellLogViewer(QMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
 
-        load_folder_action = QAction("Load LAS Folder", self)
-        load_folder_action.triggered.connect(self.load_las_folder)
-        file_menu.addAction(load_folder_action)
 
         load_files_action = QAction("Load LAS Files", self)
         load_files_action.triggered.connect(self.load_las_files)
@@ -597,13 +594,6 @@ class WellLogViewer(QMainWindow):
     def toggle_controls(self):
         self.dock.setVisible(not self.dock.isVisible())
 
-    def load_las_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing LAS Files")
-        if folder:
-            for filename in os.listdir(folder):
-                if filename.lower().endswith(".las"):
-                    self.load_las_file(os.path.join(folder, filename))
-            self.update_plot()
 
     def load_las_files(self):
         options = QFileDialog.Options()

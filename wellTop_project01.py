@@ -594,7 +594,6 @@ class WellLogViewer(QMainWindow):
     def toggle_controls(self):
         self.dock.setVisible(not self.dock.isVisible())
 
-
     def load_las_files(self):
         options = QFileDialog.Options()
         files, _ = QFileDialog.getOpenFileNames(self, "Select LAS Files", "", "LAS Files (*.las);;All Files (*)", options=options)
@@ -782,7 +781,7 @@ class WellLogViewer(QMainWindow):
     def get_curve_settings(self, curve):
         """Get the settings of a curve."""
         return {
-            #'curve_name': curve.curve_box.currentText(),
+            'curve_name': curve.curve_box.currentText(),
             'width': curve.width.value(),
             'color': curve.color,
             'line_style': curve.get_line_style(),
@@ -811,10 +810,14 @@ class WellLogViewer(QMainWindow):
             track.changed.connect(self.update_plot)
             self.tracks.append(track)
             self.track_tabs.addTab(track, f"Track {track.number}")
-        print('Track', track_settings)
+
+            # Clear existing curves
+            while track.curve_tabs.count() > 0:
+                track.remove_curve(0)
+
             # Load curves
-        for curve_settings in track_settings['curves']:
-                curve = CurveControl(len(track.curves) + 1, curves)
+            for curve_settings in track_settings['curves']:
+                curve = CurveControl(track.curve_count + 1, curves)
                 #curve.curve_box.setCurrentText(curve_settings['curve_name'])
                 curve.width.setValue(curve_settings['width'])
                 curve.color = curve_settings['color']
@@ -826,7 +829,9 @@ class WellLogViewer(QMainWindow):
                 curve.scale_combobox.setCurrentText(curve_settings['scale'])
                 curve.changed.connect(track.changed.emit)
                 track.curves.append(curve)
-                #track.curve_tabs.addTab(curve, f"Curve {len(track.curves)}")
+                track.curve_tabs.addTab(curve, f"Curve {track.curve_count + 1}")
+                track.update_curve_numbers()
+
         self.update_plot()
 
 if __name__ == "__main__":

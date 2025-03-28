@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QMenu, QVBoxLayout, QFormLayout, QLabel, QLineEdit,
     QDialogButtonBox, QMainWindow, QDockWidget, QListWidget,
     QListWidgetItem, QWidget, QComboBox, QPushButton, QCheckBox, QSpinBox,
-    QScrollArea, QAction, QColorDialog, QTabWidget, QFrame, QApplication
+    QScrollArea, QAction, QColorDialog, QTabWidget, QFrame, QApplication, QToolBar
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -66,23 +66,21 @@ class FigureWidget(QWidget):
         self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
         self.external_crosshair.connect(self.on_external_crosshair)
 
-        # Variables for custom zoom/pan.
+        # Variables for zoom functionality
         self._dragging = False
         self._press_event = None
-        self._rect = None  # For rectangular zoom
-        self._zoom_history = []  # Stack to store zoom states
+        self._rect = None
+        self._zoom_history = []  # For undo functionality
+        self._initial_limits = None
+        self.current_zoom_limits = None  # Stores current zoom state
+        self.zoom_mode = None
 
-        # Connect mouse events.
+        # Connect mouse events
         self.canvas.mpl_connect("button_press_event", self.onMousePress)
         self.canvas.mpl_connect("motion_notify_event", self.onMouseMove)
         self.canvas.mpl_connect("button_release_event", self.onMouseRelease)
-        self.canvas.mpl_connect("scroll_event", self.onScroll)
 
-        # Set default zoom mode to Rectangular
-        self.zoom_mode = "Rectangular"
-        self.canvas.setCursor(Qt.CrossCursor)
-
-    def onZoomModeChanged(self, mode):
+    def setZoomMode(self, mode):
         self.zoom_mode = mode
         if mode == "Rectangular":
             self.canvas.setCursor(Qt.CrossCursor)
@@ -90,102 +88,86 @@ class FigureWidget(QWidget):
             self.canvas.setCursor(Qt.ArrowCursor)
 
     def onMousePress(self, event):
-        if event.inaxes is None:
+        if event.inaxes is None or self.zoom_mode != "Rectangular":
             return
-        if self.zoom_mode == "Rectangular":
-            self._dragging = True
-            self._press_event = event
-            ax = event.inaxes
-            self._rect = Rectangle((event.xdata, event.ydata), 0, 0,
-                                   fill=False, edgecolor='red', linestyle='--')
-            ax.add_patch(self._rect)
-            self.canvas.draw()
+            
+        self._dragging = True
+        self._press_event = event
+        ax = event.inaxes
+        self._rect = Rectangle((event.xdata, event.ydata), 0, 0,
+                               fill=False, edgecolor='red', linestyle='--')
+        ax.add_patch(self._rect)
+        self.canvas.draw()
 
     def onMouseMove(self, event):
-        if not self._dragging or event.inaxes is None or self._press_event is None:
+        if not self._dragging or event.inaxes is None or self._press_event is None or self._rect is None:
             return
-        ax = event.inaxes
-        if self.zoom_mode == "Rectangular" and self._rect is not None:
-            x0, y0 = self._press_event.xdata, self._press_event.ydata
-            x1, y1 = event.xdata, event.ydata
-            xmin = min(x0, x1)
-            ymin = min(y0, y1)
-            width = abs(x1 - x0)
-            height = abs(y1 - y0)
-            self._rect.set_xy((xmin, ymin))
-            self._rect.set_width(width)
-            self._rect.set_height(height)
-            self.canvas.draw()
+            
+        x0, y0 = self._press_event.xdata, self._press_event.ydata
+        x1, y1 = event.xdata, event.ydata
+        xmin = min(x0, x1)
+        ymin = min(y0, y1)
+        width = abs(x1 - x0)
+        height = abs(y1 - y0)
+        self._rect.set_xy((xmin, ymin))
+        self._rect.set_width(width)
+        self._rect.set_height(height)
+        self.canvas.draw()
 
     def onMouseRelease(self, event):
-        if not self._dragging or event.inaxes is None:
+        if not self._dragging or event.inaxes is None or self._press_event is None:
             return
+            
         ax = event.inaxes
-        if self.zoom_mode == "Rectangular" and self._rect is not None:
+        if self._rect is not None:
             x0, y0 = self._press_event.xdata, self._press_event.ydata
             x1, y1 = event.xdata, event.ydata
             xmin, xmax = sorted([x0, x1])
             ymin, ymax = sorted([y0, y1])
-            ax.set_xlim(xmin, xmax)
-            ax.set_ylim(ymin, ymax)
+            
+            # Store the zoom limits
+            self.current_zoom_limits = (xmin, xmax, ymin, ymax)
+            
             self._rect.remove()
             self._rect = None
             self.canvas.draw()
+            
+            # Emit signal that zoom has changed
+            self.zoomChanged.emit(self)
+            
         self._dragging = False
         self._press_event = None
-        self.recordZoomState()
-        self.zoomChanged.emit(self)
 
-    def onScroll(self, event):
-        if event.inaxes is None:
-            return
-        ax = event.inaxes
-        base_scale = 1.1
-        if event.button == "up":
-            scale_factor = 1 / base_scale
-        elif event.button == "down":
-            scale_factor = base_scale
-        else:
-            scale_factor = 1
-
-        x0, x1 = ax.get_xlim()
-        y0, y1 = ax.get_ylim()
-        xdata = event.xdata
-        ydata = event.ydata
-
-        new_xrange = (x1 - x0) * scale_factor
-        new_yrange = (y1 - y0) * scale_factor
-
-        ax.set_xlim([xdata - new_xrange / 2, xdata + new_xrange / 2])
-        ax.set_ylim([ydata - new_yrange / 2, ydata + new_yrange / 2])
-
-        self.canvas.draw()
-        self.recordZoomState()
-        self.zoomChanged.emit(self)
-
-    def recordZoomState(self):
-        state = []
+    def applyZoom(self, xmin, xmax, ymin, ymax):
+        """Apply zoom limits to all axes in this figure"""
         for ax in self.figure.axes:
-            state.append((ax.get_xlim(), ax.get_ylim()))
-        self._zoom_history.append(state)
+            ax.set_xlim(xmin, xmax)
+            ax.set_ylim(ymin, ymax)
+        self.current_zoom_limits = (xmin, xmax, ymin, ymax)
+        self.canvas.draw()
 
     def undoZoom(self):
-        if len(self._zoom_history) > 1:
-            self._zoom_history.pop()
-            prev_state = self._zoom_history[-1]
-            for ax, limits in zip(self.figure.axes, prev_state):
-                ax.set_xlim(limits[0])
-                ax.set_ylim(limits[1])
-            self.canvas.draw()
+        """Undo the last zoom operation"""
+        if len(self._zoom_history) > 0:
+            prev_limits = self._zoom_history.pop()
+            self.applyZoom(*prev_limits)
+            return True
+        return False
 
     def resetZoom(self):
-        if not hasattr(self, '_initial_limits'):
-            return
-        for ax, limits in zip(self.figure.axes, self._initial_limits):
-            ax.set_xlim(limits[0])
-            ax.set_ylim(limits[1])
-        self.canvas.draw()
-        self._zoom_history = [self._initial_limits.copy()]
+        """Reset zoom to initial state"""
+        if self._initial_limits:
+            for ax, limits in zip(self.figure.axes, self._initial_limits):
+                ax.set_xlim(limits[0])
+                ax.set_ylim(limits[1])
+            self.current_zoom_limits = None
+            self._zoom_history = []
+            self.canvas.draw()
+
+    def recordCurrentZoom(self):
+        """Record current zoom state for undo functionality"""
+        if self.current_zoom_limits:
+            self._zoom_history.append(self.current_zoom_limits)
 
     def on_mouse_move(self, event):
         if event.inaxes:
@@ -340,13 +322,15 @@ class FigureWidget(QWidget):
                         )
 
         self.canvas.draw()
+        
+        # Store initial limits
         self._initial_limits = []
-        state = []
         for ax in self.figure.axes:
-            limits = (ax.get_xlim(), ax.get_ylim())
-            self._initial_limits.append(limits)
-            state.append(limits)
-        self._zoom_history = [state]
+            self._initial_limits.append((ax.get_xlim(), ax.get_ylim()))
+            
+        # If we have a current zoom state, reapply it
+        if self.current_zoom_limits:
+            self.applyZoom(*self.current_zoom_limits)
 
 class CurveControl(QWidget):
     changed = pyqtSignal()
@@ -584,6 +568,9 @@ class WellLogViewer(QMainWindow):
         self.figure_widgets = {}
         self.show_well_tops = True  # New attribute to track well top visibility
         self.sync_zoom_enabled = False
+        self.current_single_zoom_well = None  # Track which well has single zoom
+        self.single_zoom_limits = None  # Store single zoom limits
+        self.sync_zoom_limits = None  # Store sync zoom limits
         self.initUI()
         self.setWindowIcon(QIcon('images/ONGC_Logo.png'))
 
@@ -632,17 +619,39 @@ class WellLogViewer(QMainWindow):
         self.toggle_well_tops_action.triggered.connect(self.toggle_well_tops)
         menubar.addAction(self.toggle_well_tops_action)
 
-        self.sync_zoom_action = QAction("Sync Zoom", self, checkable=True)
-        self.sync_zoom_action.toggled.connect(self.onSyncZoomToggled)
-        menubar.addAction(self.sync_zoom_action)
-
-        self.undo_zoom_action = QAction("Undo Zoom", self)
-        self.undo_zoom_action.triggered.connect(self.undoZoom)
-        menubar.addAction(self.undo_zoom_action)
-
-        self.reset_zoom_action = QAction("Reset Zoom", self)
-        self.reset_zoom_action.triggered.connect(self.resetZoom)
-        menubar.addAction(self.reset_zoom_action)
+        # Toolbar for zoom controls
+        self.toolbar = QToolBar("Zoom Controls", self)
+        self.addToolBar(Qt.TopToolBarArea, self.toolbar)
+        
+        # Single zoom controls
+        self.toolbar.addWidget(QLabel("Single Zoom:"))
+        self.singleZoomBtn = QPushButton("Enable")
+        self.singleZoomBtn.clicked.connect(self.enableSingleZoom)
+        self.toolbar.addWidget(self.singleZoomBtn)
+        
+        self.singleUndoBtn = QPushButton("Undo")
+        self.singleUndoBtn.clicked.connect(self.undoSingleZoom)
+        self.toolbar.addWidget(self.singleUndoBtn)
+        
+        self.singleResetBtn = QPushButton("Reset")
+        self.singleResetBtn.clicked.connect(self.resetSingleZoom)
+        self.toolbar.addWidget(self.singleResetBtn)
+        
+        self.toolbar.addSeparator()
+        
+        # Sync zoom controls
+        self.toolbar.addWidget(QLabel("Sync Zoom:"))
+        self.syncZoomBtn = QPushButton("Enable")
+        self.syncZoomBtn.clicked.connect(self.enableSyncZoom)
+        self.toolbar.addWidget(self.syncZoomBtn)
+        
+        self.syncUndoBtn = QPushButton("Undo")
+        self.syncUndoBtn.clicked.connect(self.undoSyncZoom)
+        self.toolbar.addWidget(self.syncUndoBtn)
+        
+        self.syncResetBtn = QPushButton("Reset")
+        self.syncResetBtn.clicked.connect(self.resetSyncZoom)
+        self.toolbar.addWidget(self.syncResetBtn)
 
         self.dock = QDockWidget("Control", self)
         self.dock.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt;")
@@ -683,6 +692,72 @@ class WellLogViewer(QMainWindow):
         dock_widget.setLayout(dock_layout)
         self.dock.setWidget(dock_widget)
 
+    def enableSingleZoom(self):
+        """Enable single zoom mode for the current well"""
+        for widget in self.figure_widgets.values():
+            widget.setZoomMode("Rectangular")
+            widget.zoomChanged.connect(self.handleSingleZoom)
+            
+    def handleSingleZoom(self, sender):
+        """Handle single zoom event - apply to all subplots of the same well"""
+        if not sender.current_zoom_limits:
+            return
+            
+        # Store which well has the single zoom
+        self.current_single_zoom_well = sender.well_name
+        self.single_zoom_limits = sender.current_zoom_limits
+        
+        # Apply to all subplots of this well
+        for widget in self.figure_widgets.values():
+            if widget.well_name == sender.well_name:
+                widget.applyZoom(*sender.current_zoom_limits)
+                widget.recordCurrentZoom()
+
+    def undoSingleZoom(self):
+        """Undo the last single zoom operation"""
+        if self.current_single_zoom_well:
+            for widget in self.figure_widgets.values():
+                if widget.well_name == self.current_single_zoom_well:
+                    widget.undoZoom()
+
+    def resetSingleZoom(self):
+        """Reset single zoom for the current well"""
+        if self.current_single_zoom_well:
+            for widget in self.figure_widgets.values():
+                if widget.well_name == self.current_single_zoom_well:
+                    widget.resetZoom()
+            self.current_single_zoom_well = None
+            self.single_zoom_limits = None
+
+    def enableSyncZoom(self):
+        """Enable sync zoom mode"""
+        for widget in self.figure_widgets.values():
+            widget.setZoomMode("Rectangular")
+            widget.zoomChanged.connect(self.handleSyncZoom)
+            
+    def handleSyncZoom(self, sender):
+        """Handle sync zoom event - apply to all wells"""
+        if not sender.current_zoom_limits:
+            return
+            
+        self.sync_zoom_limits = sender.current_zoom_limits
+        
+        # Apply to all wells
+        for widget in self.figure_widgets.values():
+            widget.applyZoom(*sender.current_zoom_limits)
+            widget.recordCurrentZoom()
+
+    def undoSyncZoom(self):
+        """Undo the last sync zoom operation"""
+        for widget in self.figure_widgets.values():
+            widget.undoZoom()
+
+    def resetSyncZoom(self):
+        """Reset sync zoom for all wells"""
+        for widget in self.figure_widgets.values():
+            widget.resetZoom()
+        self.sync_zoom_limits = None
+
     def toggle_well_tops(self):
         """Toggle the visibility of well tops."""
         self.show_well_tops = not self.show_well_tops
@@ -716,7 +791,16 @@ class WellLogViewer(QMainWindow):
                 for top, md in self.well_tops[well]:
                     if top in self.selected_top_names:
                         well_top_lines.append((top, md))
-            self.figure_widgets[well].update_plot(self.wells[well]['data'], self.tracks, well_top_lines)
+            
+            # Apply any existing zoom states
+            widget = self.figure_widgets[well]
+            widget.update_plot(self.wells[well]['data'], self.tracks, well_top_lines)
+            
+            # Reapply zoom states if they exist
+            if self.current_single_zoom_well == well and self.single_zoom_limits:
+                widget.applyZoom(*self.single_zoom_limits)
+            elif self.sync_zoom_limits:
+                widget.applyZoom(*self.sync_zoom_limits)
 
         # Remove widgets for unselected wells
         for well in list(self.figure_widgets.keys()):
@@ -735,11 +819,6 @@ class WellLogViewer(QMainWindow):
 
     def toggle_controls(self):
         self.dock.setVisible(not self.dock.isVisible())
-
-    def onSyncZoomToggled(self, checked):
-        self.sync_zoom_enabled = checked
-        if checked:
-            self.sync_zoom()
 
     def load_las_files(self):
         options = QFileDialog.Options()
@@ -957,51 +1036,25 @@ class WellLogViewer(QMainWindow):
             track.changed.connect(self.update_plot)
             self.tracks.append(track)
             self.track_tabs.addTab(track, f"Track {track.number}")
-
-            # Clear existing curves
-            while track.curve_tabs.count() > 0:
+            while track.curve_tabs.count()>0:
                 track.remove_curve(0)
-
             # Load curves
             for curve_settings in track_settings['curves']:
-                curve = CurveControl(track.curve_count + 1, curves)
-                #curve.curve_box.setCurrentText(curve_settings['curve_name'])
-                curve.width.setValue(curve_settings['width'])
-                curve.color = curve_settings['color']
-                curve.color_btn.setStyleSheet(f"background-color: {curve.color}; border: none;")
-                curve.line_style_box.setCurrentText(curve_settings['line_style'])
-                curve.flip.setChecked(curve_settings['flip'])
-                curve.x_min.setText(curve_settings['x_min'])
-                curve.x_max.setText(curve_settings['x_max'])
-                curve.scale_combobox.setCurrentText(curve_settings['scale'])
-                curve.changed.connect(track.changed.emit)
-                track.curves.append(curve)
-                track.curve_tabs.addTab(curve, f"Curve {track.curve_count + 1}")
-                track.update_curve_numbers()
-
+                    curve = CurveControl(len(track.curves) + 1, curves)
+                    #curve.curve_box.setCurrentText(curve_settings['curve_name'])
+                    curve.width.setValue(curve_settings['width'])
+                    curve.color = curve_settings['color']
+                    curve.color_btn.setStyleSheet(f"background-color: {curve.color}; border: none;")
+                    curve.line_style_box.setCurrentText(curve_settings['line_style'])
+                    curve.flip.setChecked(curve_settings['flip'])
+                    curve.x_min.setText(curve_settings['x_min'])
+                    curve.x_max.setText(curve_settings['x_max'])
+                    curve.scale_combobox.setCurrentText(curve_settings['scale'])
+                    curve.changed.connect(track.changed.emit)
+                    track.curves.append(curve)
+                    track.curve_tabs.addTab(curve, f"Curve {track.curve_count+1}")
+                    track.update_curve_numbers()
         self.update_plot()
-
-    def sync_zoom(self):
-        if not self.figure_widgets:
-            self.statusBar().showMessage("No figures to sync.")
-            return
-        ref_widget = list(self.figure_widgets.values())[0]
-        ref_axes = ref_widget.figure.axes
-        for widget in self.figure_widgets.values():
-            for i, ax in enumerate(widget.figure.axes):
-                if i < len(ref_axes):
-                    ax.set_xlim(ref_axes[i].get_xlim())
-                    ax.set_ylim(ref_axes[i].get_ylim())
-            widget.canvas.draw()
-        self.statusBar().showMessage("Zoom synchronized across figures.")
-
-    def resetZoom(self):
-        for widget in self.figure_widgets.values():
-            widget.resetZoom()
-
-    def undoZoom(self):
-        for widget in self.figure_widgets.values():
-            widget.undoZoom()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

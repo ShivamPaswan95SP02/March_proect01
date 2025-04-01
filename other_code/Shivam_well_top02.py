@@ -142,7 +142,7 @@ class FigureWidget(QWidget):
         """Apply zoom limits to all axes in this figure"""
         for ax in self.figure.axes:
             ax.set_xlim(xmin, xmax)
-            ax.set_ylim(ymin, ymax)
+            ax.set_ylim(ymax, ymin)
         self.current_zoom_limits = (xmin, xmax, ymin, ymax)
         self.canvas.draw()
 
@@ -573,6 +573,8 @@ class WellLogViewer(QMainWindow):
         self.sync_zoom_limits = None  # Store sync zoom limits
         self.initUI()
         self.setWindowIcon(QIcon('images/ONGC_Logo.png'))
+        # Enable single zoom by default
+        self.enableSingleZoom()
 
     def initUI(self):
         self.setWindowTitle('Well Log Viewer')
@@ -610,7 +612,7 @@ class WellLogViewer(QMainWindow):
         toggle_controls_action.triggered.connect(self.toggle_controls)
         menubar.addAction(toggle_controls_action)
 
-        change_bg_action = QAction("Change Bg Color", self)
+        change_bg_action = QAction("Themes", self)
         change_bg_action.triggered.connect(self.change_background_color)
         menubar.addAction(change_bg_action)
 
@@ -620,7 +622,7 @@ class WellLogViewer(QMainWindow):
         menubar.addAction(self.toggle_well_tops_action)
 
         # New actions for zoom functionality
-        self.sync_zoom_action = QAction("Sync Zoom", self, checkable=True)
+        self.sync_zoom_action = QAction("Enable Sync Zoom", self, checkable=True)
         self.sync_zoom_action.toggled.connect(self.onSyncZoomToggled)
         menubar.addAction(self.sync_zoom_action)
 
@@ -675,9 +677,14 @@ class WellLogViewer(QMainWindow):
         """Handle sync zoom toggle."""
         self.sync_zoom_enabled = checked
         if checked:
+            self.disableSingleZoom()
             self.enableSyncZoom()
+            self.sync_zoom_action.setText("Disable Sync Zoom")
+            
         else:
             self.disableSyncZoom()
+            self.sync_zoom_action.setText("Enable Sync Zoom")
+            self.enableSingleZoom()
 
     def enableSyncZoom(self):
         """Enable sync zoom mode"""
@@ -688,11 +695,27 @@ class WellLogViewer(QMainWindow):
     def disableSyncZoom(self):
         """Disable sync zoom mode"""
         for widget in self.figure_widgets.values():
-            widget.setZoomMode(None)
+            widget.setZoomMode("Rectangular")
             try:
                 widget.zoomChanged.disconnect(self.handleSyncZoom)
             except TypeError:
                 pass
+            widget.zoomChanged.connect(self.handleSingleZoom)
+
+    def enableSingleZoom(self):
+        """Enable single zoom mode (default)."""
+        for widget in self.figure_widgets.values():
+            widget.setZoomMode("Rectangular")
+            widget.zoomChanged.connect(self.handleSingleZoom)
+
+    def disableSingleZoom(self):
+        """Disable single zoom mode."""
+        for widget in self.figure_widgets.values():
+            try:
+                widget.zoomChanged.disconnect(self.handleSingleZoom)
+            except TypeError:
+                pass
+
 
     def handleSyncZoom(self, sender):
         """Handle sync zoom event - apply to all wells"""
@@ -761,11 +784,19 @@ class WellLogViewer(QMainWindow):
             except TypeError:
                 pass
 
-        # Connect signals for synchronization
+        # Connect signals for crosshair synchronization and create widgets if needed.
         for well in selected_wells:
             if well not in self.figure_widgets:
                 self.figure_widgets[well] = FigureWidget(well)
                 self.figure_layout.addWidget(self.figure_widgets[well])
+                # Set the appropriate zoom mode based on current mode.
+                if self.sync_zoom_enabled:
+                    self.figure_widgets[well].setZoomMode("Rectangular")
+                    self.figure_widgets[well].zoomChanged.connect(self.handleSyncZoom)
+                else:
+                    self.figure_widgets[well].setZoomMode("Rectangular")
+                    self.figure_widgets[well].zoomChanged.connect(self.handleSingleZoom)
+
 
             # Connect the mouse_moved signal to all other widgets
             for other_well, other_widget in self.figure_widgets.items():

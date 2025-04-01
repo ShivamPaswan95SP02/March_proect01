@@ -194,9 +194,10 @@ class FigureWidget(QWidget):
             self.crosshair_vline = ax.axvline(x, color='red', linestyle='--', linewidth=1)
 
         if not external:
-            self.cursor_coords = ax.text(0.05, 0.95, f'x={x:.2f}, y={y:.2f}',
-                                         transform=ax.transAxes, fontsize=9,
-                                         verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.5))
+            self.cursor_coords = ax.text(x, y, f'x={x:.2f}, y={y:.2f}',
+                                         transform=ax.transData, fontsize=9,
+                                         verticalalignment='bottom', horizontalalignment='left',
+                                         bbox=dict(boxstyle='round,pad=0.1', facecolor='yellow', alpha=0.5))
         self.canvas.draw()
 
     def remove_crosshair(self):
@@ -636,7 +637,7 @@ class WellLogViewer(QMainWindow):
         menubar.addAction(self.reset_zoom_action)
 
         # New action for sharing Y-axis limits
-        self.share_y_axis_action = QAction("Enable Link Y Axis", self, checkable=True)
+        self.share_y_axis_action = QAction("Link Y Axis", self, checkable=True)
         self.share_y_axis_action.toggled.connect(self.onShareYAxisToggled)
         menubar.addAction(self.share_y_axis_action)
 
@@ -683,10 +684,10 @@ class WellLogViewer(QMainWindow):
         """Handle share Y-axis toggle."""
         self.share_y_axis_enabled = checked
         if checked:
-            self.share_y_axis_action.setText("Disable Link Y Axis")
+            self.share_y_axis_action.setText("Unlink Y Axis")
             self.synchronizeYAxisLimits()
         else:
-            self.share_y_axis_action.setText("Enable Link Y Axis")
+            self.share_y_axis_action.setText("Link Y Axis")
             self.update_plot()
 
     def synchronizeYAxisLimits(self):

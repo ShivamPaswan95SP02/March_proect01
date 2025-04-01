@@ -571,6 +571,7 @@ class WellLogViewer(QMainWindow):
         self.current_single_zoom_well = None  # Track which well has single zoom
         self.single_zoom_limits = None  # Store single zoom limits
         self.sync_zoom_limits = None  # Store sync zoom limits
+        self.share_y_axis_enabled = False  # New attribute to track shared Y-axis state
         self.initUI()
         self.setWindowIcon(QIcon('images/ONGC_Logo.png'))
         # Enable single zoom by default
@@ -634,6 +635,11 @@ class WellLogViewer(QMainWindow):
         self.reset_zoom_action.triggered.connect(self.resetZoom)
         menubar.addAction(self.reset_zoom_action)
 
+        # New action for sharing Y-axis limits
+        self.share_y_axis_action = QAction("Enable Share Y Axis", self, checkable=True)
+        self.share_y_axis_action.toggled.connect(self.onShareYAxisToggled)
+        menubar.addAction(self.share_y_axis_action)
+
         self.dock = QDockWidget("Control", self)
         self.dock.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt;")
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
@@ -673,6 +679,31 @@ class WellLogViewer(QMainWindow):
         dock_widget.setLayout(dock_layout)
         self.dock.setWidget(dock_widget)
 
+    def onShareYAxisToggled(self, checked):
+        """Handle share Y-axis toggle."""
+        self.share_y_axis_enabled = checked
+        if checked:
+            self.share_y_axis_action.setText("Disable Share Y Axis")
+            self.synchronizeYAxisLimits()
+        else:
+            self.share_y_axis_action.setText("Enable Share Y Axis")
+            self.update_plot()
+
+    def synchronizeYAxisLimits(self):
+        """Synchronize Y-axis limits across all wells."""
+        if not self.figure_widgets:
+            return
+
+        # Get the Y-axis limits from the first well
+        first_widget = next(iter(self.figure_widgets.values()))
+        y_min, y_max = first_widget.figure.axes[0].get_ylim()
+
+        # Apply the Y-axis limits to all wells
+        for widget in self.figure_widgets.values():
+            for ax in widget.figure.axes:
+                ax.set_ylim( y_min , y_max)
+            widget.canvas.draw()
+
     def onSyncZoomToggled(self, checked):
         """Handle sync zoom toggle."""
         self.sync_zoom_enabled = checked
@@ -686,12 +717,11 @@ class WellLogViewer(QMainWindow):
                     widget.applyZoom(*self.single_zoom_limits)
                     widget.recordCurrentZoom()
             self.sync_zoom_action.setText("Disable Sync Zoom")
-            
+
         else:
             self.disableSyncZoom()
             self.sync_zoom_action.setText("Enable Sync Zoom")
             self.enableSingleZoom()
-
 
     def enableSyncZoom(self):
         """Enable sync zoom mode"""
@@ -722,7 +752,6 @@ class WellLogViewer(QMainWindow):
                 widget.zoomChanged.disconnect(self.handleSingleZoom)
             except TypeError:
                 pass
-
 
     def handleSyncZoom(self, sender):
         """Handle sync zoom event - apply to all wells"""
@@ -804,7 +833,6 @@ class WellLogViewer(QMainWindow):
                     self.figure_widgets[well].setZoomMode("Rectangular")
                     self.figure_widgets[well].zoomChanged.connect(self.handleSingleZoom)
 
-
             # Connect the mouse_moved signal to all other widgets
             for other_well, other_widget in self.figure_widgets.items():
                 if other_well != well:
@@ -834,6 +862,10 @@ class WellLogViewer(QMainWindow):
                 widget.setParent(None)
                 widget.deleteLater()
                 del self.figure_widgets[well]
+
+        # Synchronize Y-axis limits if enabled
+        if self.share_y_axis_enabled:
+            self.synchronizeYAxisLimits()
 
     def change_background_color(self):
         """Opens a color picker to change the background color."""

@@ -679,12 +679,19 @@ class WellLogViewer(QMainWindow):
         if checked:
             self.disableSingleZoom()
             self.enableSyncZoom()
+            # If a single zoom was already applied, use its limits for all wells.
+            if self.single_zoom_limits:
+                self.sync_zoom_limits = self.single_zoom_limits
+                for widget in self.figure_widgets.values():
+                    widget.applyZoom(*self.single_zoom_limits)
+                    widget.recordCurrentZoom()
             self.sync_zoom_action.setText("Disable Sync Zoom")
             
         else:
             self.disableSyncZoom()
             self.sync_zoom_action.setText("Enable Sync Zoom")
             self.enableSingleZoom()
+
 
     def enableSyncZoom(self):
         """Enable sync zoom mode"""

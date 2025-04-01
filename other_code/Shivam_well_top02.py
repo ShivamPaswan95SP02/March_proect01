@@ -636,7 +636,7 @@ class WellLogViewer(QMainWindow):
         menubar.addAction(self.reset_zoom_action)
 
         # New action for sharing Y-axis limits
-        self.share_y_axis_action = QAction("Enable Share Y Axis", self, checkable=True)
+        self.share_y_axis_action = QAction("Enable Link Y Axis", self, checkable=True)
         self.share_y_axis_action.toggled.connect(self.onShareYAxisToggled)
         menubar.addAction(self.share_y_axis_action)
 
@@ -683,10 +683,10 @@ class WellLogViewer(QMainWindow):
         """Handle share Y-axis toggle."""
         self.share_y_axis_enabled = checked
         if checked:
-            self.share_y_axis_action.setText("Disable Share Y Axis")
+            self.share_y_axis_action.setText("Disable Link Y Axis")
             self.synchronizeYAxisLimits()
         else:
-            self.share_y_axis_action.setText("Enable Share Y Axis")
+            self.share_y_axis_action.setText("Enable Link Y Axis")
             self.update_plot()
 
     def synchronizeYAxisLimits(self):

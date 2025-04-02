@@ -152,6 +152,9 @@ class FigureWidget(QWidget):
             prev_limits = self._zoom_history.pop()
             self.applyZoom(*prev_limits)
             return True
+        elif self._initial_limits:
+            # If no zoom history, revert to initial limits
+            self.resetZoom()
         return False
 
     def resetZoom(self):
@@ -700,9 +703,11 @@ class WellLogViewer(QMainWindow):
         y_min, y_max = first_widget.figure.axes[0].get_ylim()
 
         # Apply the Y-axis limits to all wells
-        for widget in self.figure_widgets.values():
+        for idx, widget in enumerate(self.figure_widgets.values()):
             for ax in widget.figure.axes:
-                ax.set_ylim( y_min , y_max)
+                ax.set_ylim(y_min, y_max)
+                if idx != 0:  # Hide Y-axis tick labels for all but the first well
+                    ax.tick_params(labelleft=False)
             widget.canvas.draw()
 
     def onSyncZoomToggled(self, checked):
@@ -1022,7 +1027,7 @@ class WellLogViewer(QMainWindow):
             self.update_plot()
 
     def renumber_tracks(self):
-        """Renumber tracks and update their tab titles."""
+        """Renumbers tracks and update their tab titles."""
         for i, track in enumerate(self.tracks, start=1):
             track.number = i
             track.update_curve_numbers()  # Renumber curves within the track

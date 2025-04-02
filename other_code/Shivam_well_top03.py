@@ -56,6 +56,8 @@ class FigureWidget(QWidget):
 
         self.canvas = FigureCanvas(self.figure)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)  # Set margins to zero
+        layout.setSpacing(0)  # Set spacing to zero
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
@@ -588,6 +590,8 @@ class WellLogViewer(QMainWindow):
         self.figure_scroll = QScrollArea()
         self.figure_container = QWidget()
         self.figure_layout = QHBoxLayout(self.figure_container)
+        self.figure_layout.setContentsMargins(0, 0, 0, 0)  # Set margins to zero
+        self.figure_layout.setSpacing(0)  # Set spacing to zero
         self.figure_scroll.setWidgetResizable(True)
         self.figure_scroll.setWidget(self.figure_container)
         self.setCentralWidget(self.figure_scroll)

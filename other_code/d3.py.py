@@ -90,7 +90,7 @@ class FigureWidget(QWidget):
     def onMousePress(self, event):
         if event.inaxes is None or self.zoom_mode != "Rectangular":
             return
-            
+
         self._dragging = True
         self._press_event = event
         ax = event.inaxes
@@ -102,7 +102,7 @@ class FigureWidget(QWidget):
     def onMouseMove(self, event):
         if not self._dragging or event.inaxes is None or self._press_event is None or self._rect is None:
             return
-            
+
         x0, y0 = self._press_event.xdata, self._press_event.ydata
         x1, y1 = event.xdata, event.ydata
         xmin = min(x0, x1)
@@ -117,24 +117,24 @@ class FigureWidget(QWidget):
     def onMouseRelease(self, event):
         if not self._dragging or event.inaxes is None or self._press_event is None:
             return
-            
+
         ax = event.inaxes
         if self._rect is not None:
             x0, y0 = self._press_event.xdata, self._press_event.ydata
             x1, y1 = event.xdata, event.ydata
             xmin, xmax = sorted([x0, x1])
             ymin, ymax = sorted([y0, y1])
-            
+
             # Store the zoom limits
             self.current_zoom_limits = (xmin, xmax, ymin, ymax)
-            
+
             self._rect.remove()
             self._rect = None
             self.canvas.draw()
-            
+
             # Emit signal that zoom has changed
             self.zoomChanged.emit(self)
-            
+
         self._dragging = False
         self._press_event = None
 
@@ -142,7 +142,7 @@ class FigureWidget(QWidget):
         """Apply zoom limits to all axes in this figure"""
         for ax in self.figure.axes:
             ax.set_xlim(xmin, xmax)
-            ax.set_ylim(ymin, ymax)
+            ax.set_ylim(ymax, ymin)
         self.current_zoom_limits = (xmin, xmax, ymin, ymax)
         self.canvas.draw()
 
@@ -194,9 +194,10 @@ class FigureWidget(QWidget):
             self.crosshair_vline = ax.axvline(x, color='red', linestyle='--', linewidth=1)
 
         if not external:
-            self.cursor_coords = ax.text(0.05, 0.95, f'x={x:.2f}, y={y:.2f}',
-                                         transform=ax.transAxes, fontsize=9,
-                                         verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.5))
+            self.cursor_coords = ax.text(x, y, f'x={x:.2f}, y={y:.2f}',
+                                         transform=ax.transData, fontsize=9,
+                                         verticalalignment='bottom', horizontalalignment='left',
+                                         bbox=dict(boxstyle='round,pad=0.1', facecolor='yellow', alpha=0.5))
         self.canvas.draw()
 
     def remove_crosshair(self):
@@ -322,12 +323,12 @@ class FigureWidget(QWidget):
                         )
 
         self.canvas.draw()
-        
+
         # Store initial limits
         self._initial_limits = []
         for ax in self.figure.axes:
             self._initial_limits.append((ax.get_xlim(), ax.get_ylim()))
-            
+
         # If we have a current zoom state, reapply it
         if self.current_zoom_limits:
             self.applyZoom(*self.current_zoom_limits)
@@ -571,8 +572,11 @@ class WellLogViewer(QMainWindow):
         self.current_single_zoom_well = None  # Track which well has single zoom
         self.single_zoom_limits = None  # Store single zoom limits
         self.sync_zoom_limits = None  # Store sync zoom limits
+        self.share_y_axis_enabled = False  # New attribute to track shared Y-axis state
         self.initUI()
         self.setWindowIcon(QIcon('images/ONGC_Logo.png'))
+        # Enable single zoom by default
+        self.enableSingleZoom()
 
     def initUI(self):
         self.setWindowTitle('Well Log Viewer')
@@ -610,7 +614,7 @@ class WellLogViewer(QMainWindow):
         toggle_controls_action.triggered.connect(self.toggle_controls)
         menubar.addAction(toggle_controls_action)
 
-        change_bg_action = QAction("Change Bg Color", self)
+        change_bg_action = QAction("Themes", self)
         change_bg_action.triggered.connect(self.change_background_color)
         menubar.addAction(change_bg_action)
 
@@ -619,39 +623,23 @@ class WellLogViewer(QMainWindow):
         self.toggle_well_tops_action.triggered.connect(self.toggle_well_tops)
         menubar.addAction(self.toggle_well_tops_action)
 
-        # Toolbar for zoom controls
-        self.toolbar = QToolBar("Zoom Controls", self)
-        self.addToolBar(Qt.TopToolBarArea, self.toolbar)
-        
-        # Single zoom controls
-        self.toolbar.addWidget(QLabel("Single Zoom:"))
-        self.singleZoomBtn = QPushButton("Enable")
-        self.singleZoomBtn.clicked.connect(self.enableSingleZoom)
-        self.toolbar.addWidget(self.singleZoomBtn)
-        
-        self.singleUndoBtn = QPushButton("Undo")
-        self.singleUndoBtn.clicked.connect(self.undoSingleZoom)
-        self.toolbar.addWidget(self.singleUndoBtn)
-        
-        self.singleResetBtn = QPushButton("Reset")
-        self.singleResetBtn.clicked.connect(self.resetSingleZoom)
-        self.toolbar.addWidget(self.singleResetBtn)
-        
-        self.toolbar.addSeparator()
-        
-        # Sync zoom controls
-        self.toolbar.addWidget(QLabel("Sync Zoom:"))
-        self.syncZoomBtn = QPushButton("Enable")
-        self.syncZoomBtn.clicked.connect(self.enableSyncZoom)
-        self.toolbar.addWidget(self.syncZoomBtn)
-        
-        self.syncUndoBtn = QPushButton("Undo")
-        self.syncUndoBtn.clicked.connect(self.undoSyncZoom)
-        self.toolbar.addWidget(self.syncUndoBtn)
-        
-        self.syncResetBtn = QPushButton("Reset")
-        self.syncResetBtn.clicked.connect(self.resetSyncZoom)
-        self.toolbar.addWidget(self.syncResetBtn)
+        # New actions for zoom functionality
+        self.sync_zoom_action = QAction("Enable Sync Zoom", self, checkable=True)
+        self.sync_zoom_action.toggled.connect(self.onSyncZoomToggled)
+        menubar.addAction(self.sync_zoom_action)
+
+        self.undo_zoom_action = QAction("Undo Zoom", self)
+        self.undo_zoom_action.triggered.connect(self.undoZoom)
+        menubar.addAction(self.undo_zoom_action)
+
+        self.reset_zoom_action = QAction("Reset Zoom", self)
+        self.reset_zoom_action.triggered.connect(self.resetZoom)
+        menubar.addAction(self.reset_zoom_action)
+
+        # New action for sharing Y-axis limits
+        self.share_y_axis_action = QAction("Link Y Axis", self, checkable=True)
+        self.share_y_axis_action.toggled.connect(self.onShareYAxisToggled)
+        menubar.addAction(self.share_y_axis_action)
 
         self.dock = QDockWidget("Control", self)
         self.dock.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt;")
@@ -692,71 +680,129 @@ class WellLogViewer(QMainWindow):
         dock_widget.setLayout(dock_layout)
         self.dock.setWidget(dock_widget)
 
-    def enableSingleZoom(self):
-        """Enable single zoom mode for the current well"""
-        for widget in self.figure_widgets.values():
-            widget.setZoomMode("Rectangular")
-            widget.zoomChanged.connect(self.handleSingleZoom)
-            
-    def handleSingleZoom(self, sender):
-        """Handle single zoom event - apply to all subplots of the same well"""
-        if not sender.current_zoom_limits:
+    def onShareYAxisToggled(self, checked):
+        """Handle share Y-axis toggle."""
+        self.share_y_axis_enabled = checked
+        if checked:
+            self.share_y_axis_action.setText("Unlink Y Axis")
+            self.synchronizeYAxisLimits()
+        else:
+            self.share_y_axis_action.setText("Link Y Axis")
+            self.update_plot()
+
+    def synchronizeYAxisLimits(self):
+        """Synchronize Y-axis limits across all wells."""
+        if not self.figure_widgets:
             return
-            
-        # Store which well has the single zoom
-        self.current_single_zoom_well = sender.well_name
-        self.single_zoom_limits = sender.current_zoom_limits
-        
-        # Apply to all subplots of this well
+
+        # Get the Y-axis limits from the first well
+        first_widget = next(iter(self.figure_widgets.values()))
+        y_min, y_max = first_widget.figure.axes[0].get_ylim()
+
+        # Apply the Y-axis limits to all wells
         for widget in self.figure_widgets.values():
-            if widget.well_name == sender.well_name:
-                widget.applyZoom(*sender.current_zoom_limits)
-                widget.recordCurrentZoom()
+            for ax in widget.figure.axes:
+                ax.set_ylim( y_min , y_max)
+            widget.canvas.draw()
 
-    def undoSingleZoom(self):
-        """Undo the last single zoom operation"""
-        if self.current_single_zoom_well:
-            for widget in self.figure_widgets.values():
-                if widget.well_name == self.current_single_zoom_well:
-                    widget.undoZoom()
+    def onSyncZoomToggled(self, checked):
+        """Handle sync zoom toggle."""
+        self.sync_zoom_enabled = checked
+        if checked:
+            self.disableSingleZoom()
+            self.enableSyncZoom()
+            # If a single zoom was already applied, use its limits for all wells.
+            if self.single_zoom_limits:
+                self.sync_zoom_limits = self.single_zoom_limits
+                for widget in self.figure_widgets.values():
+                    widget.applyZoom(*self.single_zoom_limits)
+                    widget.recordCurrentZoom()
+            self.sync_zoom_action.setText("Disable Sync Zoom")
 
-    def resetSingleZoom(self):
-        """Reset single zoom for the current well"""
-        if self.current_single_zoom_well:
-            for widget in self.figure_widgets.values():
-                if widget.well_name == self.current_single_zoom_well:
-                    widget.resetZoom()
-            self.current_single_zoom_well = None
-            self.single_zoom_limits = None
+        else:
+            self.disableSyncZoom()
+            self.sync_zoom_action.setText("Enable Sync Zoom")
+            self.enableSingleZoom()
 
     def enableSyncZoom(self):
         """Enable sync zoom mode"""
         for widget in self.figure_widgets.values():
             widget.setZoomMode("Rectangular")
             widget.zoomChanged.connect(self.handleSyncZoom)
-            
+
+    def disableSyncZoom(self):
+        """Disable sync zoom mode"""
+        for widget in self.figure_widgets.values():
+            widget.setZoomMode("Rectangular")
+            try:
+                widget.zoomChanged.disconnect(self.handleSyncZoom)
+            except TypeError:
+                pass
+            widget.zoomChanged.connect(self.handleSingleZoom)
+
+    def enableSingleZoom(self):
+        """Enable single zoom mode (default)."""
+        for widget in self.figure_widgets.values():
+            widget.setZoomMode("Rectangular")
+            widget.zoomChanged.connect(self.handleSingleZoom)
+
+    def disableSingleZoom(self):
+        """Disable single zoom mode."""
+        for widget in self.figure_widgets.values():
+            try:
+                widget.zoomChanged.disconnect(self.handleSingleZoom)
+            except TypeError:
+                pass
+
     def handleSyncZoom(self, sender):
         """Handle sync zoom event - apply to all wells"""
         if not sender.current_zoom_limits:
             return
-            
+
         self.sync_zoom_limits = sender.current_zoom_limits
-        
+
         # Apply to all wells
         for widget in self.figure_widgets.values():
             widget.applyZoom(*sender.current_zoom_limits)
             widget.recordCurrentZoom()
 
-    def undoSyncZoom(self):
-        """Undo the last sync zoom operation"""
-        for widget in self.figure_widgets.values():
-            widget.undoZoom()
+    def handleSingleZoom(self, sender):
+        """Handle single zoom event - apply to the selected well only"""
+        if not sender.current_zoom_limits:
+            return
 
-    def resetSyncZoom(self):
-        """Reset sync zoom for all wells"""
+        # Store which well has the single zoom
+        self.current_single_zoom_well = sender.well_name
+        self.single_zoom_limits = sender.current_zoom_limits
+
+        # Apply to the selected well only
         for widget in self.figure_widgets.values():
-            widget.resetZoom()
-        self.sync_zoom_limits = None
+            if widget.well_name == sender.well_name:
+                widget.applyZoom(*sender.current_zoom_limits)
+                widget.recordCurrentZoom()
+
+    def undoZoom(self):
+        """Undo the last zoom operation"""
+        if self.sync_zoom_enabled:
+            for widget in self.figure_widgets.values():
+                widget.undoZoom()
+        else:
+            if self.current_single_zoom_well:
+                widget = self.figure_widgets[self.current_single_zoom_well]
+                widget.undoZoom()
+
+    def resetZoom(self):
+        """Reset zoom for all wells"""
+        if self.sync_zoom_enabled:
+            for widget in self.figure_widgets.values():
+                widget.resetZoom()
+            self.sync_zoom_limits = None
+        else:
+            if self.current_single_zoom_well:
+                widget = self.figure_widgets[self.current_single_zoom_well]
+                widget.resetZoom()
+                self.current_single_zoom_well = None
+                self.single_zoom_limits = None
 
     def toggle_well_tops(self):
         """Toggle the visibility of well tops."""
@@ -775,11 +821,18 @@ class WellLogViewer(QMainWindow):
             except TypeError:
                 pass
 
-        # Connect signals for synchronization
+        # Connect signals for crosshair synchronization and create widgets if needed.
         for well in selected_wells:
             if well not in self.figure_widgets:
                 self.figure_widgets[well] = FigureWidget(well)
                 self.figure_layout.addWidget(self.figure_widgets[well])
+                # Set the appropriate zoom mode based on current mode.
+                if self.sync_zoom_enabled:
+                    self.figure_widgets[well].setZoomMode("Rectangular")
+                    self.figure_widgets[well].zoomChanged.connect(self.handleSyncZoom)
+                else:
+                    self.figure_widgets[well].setZoomMode("Rectangular")
+                    self.figure_widgets[well].zoomChanged.connect(self.handleSingleZoom)
 
             # Connect the mouse_moved signal to all other widgets
             for other_well, other_widget in self.figure_widgets.items():
@@ -791,16 +844,16 @@ class WellLogViewer(QMainWindow):
                 for top, md in self.well_tops[well]:
                     if top in self.selected_top_names:
                         well_top_lines.append((top, md))
-            
+
             # Apply any existing zoom states
             widget = self.figure_widgets[well]
             widget.update_plot(self.wells[well]['data'], self.tracks, well_top_lines)
-            
+
             # Reapply zoom states if they exist
-            if self.current_single_zoom_well == well and self.single_zoom_limits:
-                widget.applyZoom(*self.single_zoom_limits)
-            elif self.sync_zoom_limits:
+            if self.sync_zoom_enabled and self.sync_zoom_limits:
                 widget.applyZoom(*self.sync_zoom_limits)
+            elif self.current_single_zoom_well == well and self.single_zoom_limits:
+                widget.applyZoom(*self.single_zoom_limits)
 
         # Remove widgets for unselected wells
         for well in list(self.figure_widgets.keys()):
@@ -810,6 +863,10 @@ class WellLogViewer(QMainWindow):
                 widget.setParent(None)
                 widget.deleteLater()
                 del self.figure_widgets[well]
+
+        # Synchronize Y-axis limits if enabled
+        if self.share_y_axis_enabled:
+            self.synchronizeYAxisLimits()
 
     def change_background_color(self):
         """Opens a color picker to change the background color."""

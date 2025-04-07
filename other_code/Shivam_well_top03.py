@@ -56,8 +56,6 @@ class FigureWidget(QWidget):
 
         self.canvas = FigureCanvas(self.figure)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)  # Set margins to zero
-        layout.setSpacing(0)  # Set spacing to zero
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
@@ -219,7 +217,7 @@ class FigureWidget(QWidget):
 
     def update_plot(self, data, tracks, well_top_lines=None):
         self.figure.clear()
-        self.figure.set_constrained_layout_pads(w_pad=0, h_pad=0, wspace=0, hspace=0)
+
         self.data = data
         self.tracks = tracks
         n_tracks = len(tracks)
@@ -228,12 +226,12 @@ class FigureWidget(QWidget):
             ax.text(0.5, 0.5, "No tracks", ha='center', va='center')
         else:
             axes = self.figure.subplots(1, n_tracks, sharey=True) if n_tracks > 1 else [self.figure.add_subplot(111)]
+            self.figure.subplots_adjust(wspace=0, hspace=0)  # Adjust the space between subplots
             depth = data['DEPT']
 
             for idx, (ax, track) in enumerate(zip(axes, tracks)):
                 ax.set_facecolor(track.bg_color)  # Apply Background Color
-                if idx != 0:
-                    ax.tick_params(left=False, labelleft=False)
+
                 track.ax = ax  # Store the axis for later reference
                 valid_curves = []
                 lines_list = []
@@ -322,7 +320,7 @@ class FigureWidget(QWidget):
                     for (top, md) in well_top_lines:
                         track.ax.axhline(y=md, color='red', linestyle='--', linewidth=1)
                         track.ax.text(
-                            0.02, md, f"{self.well_name}: {top}",  # Adjust x-coordinate to 0.02 for left alignment
+                            0.005, md, f"{top}",  # Adjust x-coordinate to 0.005 for left alignment
                             transform=track.ax.get_yaxis_transform(),
                             color='red', fontsize=8, horizontalalignment='left', verticalalignment='bottom'
                         )
@@ -590,8 +588,6 @@ class WellLogViewer(QMainWindow):
         self.figure_scroll = QScrollArea()
         self.figure_container = QWidget()
         self.figure_layout = QHBoxLayout(self.figure_container)
-        self.figure_layout.setContentsMargins(0, 0, 0, 0)  # Set margins to zero
-        self.figure_layout.setSpacing(0)  # Set spacing to zero
         self.figure_scroll.setWidgetResizable(True)
         self.figure_scroll.setWidget(self.figure_container)
         self.setCentralWidget(self.figure_scroll)
@@ -702,14 +698,23 @@ class WellLogViewer(QMainWindow):
         if not self.figure_widgets:
             return
 
-        # Get the Y-axis limits from the first well
-        first_widget = next(iter(self.figure_widgets.values()))
-        y_min, y_max = first_widget.figure.axes[0].get_ylim()
+        # Get the Y-axis limits from the selected wells
+        selected_wells = [self.well_list.item(i).text() for i in range(self.well_list.count())
+                          if self.well_list.item(i).checkState() == Qt.Checked]
+
+        y_min = float('inf')
+        y_max = float('-inf')
+
+        for well in selected_wells:
+            data = self.wells[well]['data']
+            depth = data['DEPT']
+            y_min = min(y_min, depth.min())
+            y_max = max(y_max, depth.max())
 
         # Apply the Y-axis limits to all wells
         for idx, widget in enumerate(self.figure_widgets.values()):
             for ax in widget.figure.axes:
-                ax.set_ylim(y_min, y_max)
+                ax.set_ylim(y_max, y_min)
                 if idx != 0:  # Hide Y-axis tick labels for all but the first well
                     ax.tick_params(labelleft=False)
             widget.canvas.draw()

@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QMenu, QVBoxLayout, QFormLayout, QLabel, QLineEdit,
     QDialogButtonBox, QMainWindow, QDockWidget, QListWidget,
     QListWidgetItem, QWidget, QComboBox, QPushButton, QCheckBox, QSpinBox,
-    QScrollArea, QAction, QColorDialog, QTabWidget, QFrame, QApplication, QToolBar
+    QScrollArea, QSizePolicy , QAction, QColorDialog, QTabWidget, QFrame, QApplication, QToolBar
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -16,11 +16,22 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from matplotlib.patches import Rectangle
+from collections import defaultdict
+from PyQt5.QtWidgets import QProgressDialog
 
 # Update the overall font size on plots
 plt.rcParams.update({'font.size': 8.5})
 
 def loadStyleSheet(fileName):
+    """
+    Loads a stylesheet from a file.
+
+    Parameters:
+        fileName (str): The path to the stylesheet file.
+
+    Returns:
+        str: The content of the stylesheet file.
+    """
     try:
         with open(fileName, "r") as f:
             return f.read()
@@ -30,6 +41,9 @@ def loadStyleSheet(fileName):
 
 # --- Custom QListWidget: Clicking on an item's label toggles its check state ---
 class ClickableListWidget(QListWidget):
+    """
+    Custom QListWidget that allows toggling the check state of an item by clicking on its label.
+    """
     def mousePressEvent(self, event):
         item = self.itemAt(event.pos())
         if item is not None:
@@ -44,6 +58,9 @@ class ClickableListWidget(QListWidget):
         super().mousePressEvent(event)
 
 class FigureWidget(QWidget):
+    """
+    Widget that contains a Matplotlib figure for plotting well log data.
+    """
     mouse_moved = pyqtSignal(float, float)
     external_crosshair = pyqtSignal(float, float)
     zoomChanged = pyqtSignal(object)  # Signal emitted after a zoom event
@@ -51,11 +68,14 @@ class FigureWidget(QWidget):
     def __init__(self, well_name, parent=None):
         super().__init__(parent)
         self.well_name = well_name
-        self.figure = Figure(layout="constrained")  # Use constrained layout
-        self.figure.set_constrained_layout_pads(w_pad=0, h_pad=0, wspace=0, hspace=0)
+        self.figure = Figure()  # Use tight layout
+
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  # Allow horizontal expansion
 
         self.canvas = FigureCanvas(self.figure)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)  # Set contents margins to zero
+        layout.setSpacing(0)  # Set spacing to zero
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
@@ -81,6 +101,12 @@ class FigureWidget(QWidget):
         self.canvas.mpl_connect("button_release_event", self.onMouseRelease)
 
     def setZoomMode(self, mode):
+        """
+        Sets the zoom mode for the figure.
+
+        Parameters:
+            mode (str): The zoom mode to set.
+        """
         self.zoom_mode = mode
         if mode == "Rectangular":
             self.canvas.setCursor(Qt.CrossCursor)
@@ -88,6 +114,9 @@ class FigureWidget(QWidget):
             self.canvas.setCursor(Qt.ArrowCursor)
 
     def onMousePress(self, event):
+        """
+        Handles mouse press events for zooming.
+        """
         if event.inaxes is None or self.zoom_mode != "Rectangular":
             return
 
@@ -100,6 +129,9 @@ class FigureWidget(QWidget):
         self.canvas.draw()
 
     def onMouseMove(self, event):
+        """
+        Handles mouse move events for zooming.
+        """
         if not self._dragging or event.inaxes is None or self._press_event is None or self._rect is None:
             return
 
@@ -115,6 +147,9 @@ class FigureWidget(QWidget):
         self.canvas.draw()
 
     def onMouseRelease(self, event):
+        """
+        Handles mouse release events for zooming.
+        """
         if not self._dragging or event.inaxes is None or self._press_event is None:
             return
 
@@ -139,7 +174,15 @@ class FigureWidget(QWidget):
         self._press_event = None
 
     def applyZoom(self, xmin, xmax, ymin, ymax):
-        """Apply zoom limits to all axes in this figure"""
+        """
+        Applies zoom limits to all axes in this figure.
+
+        Parameters:
+            xmin (float): Minimum x-axis limit.
+            xmax (float): Maximum x-axis limit.
+            ymin (float): Minimum y-axis limit.
+            ymax (float): Maximum y-axis limit.
+        """
         for ax in self.figure.axes:
             ax.set_xlim(xmin, xmax)
             ax.set_ylim(ymax, ymin)
@@ -147,8 +190,10 @@ class FigureWidget(QWidget):
         self.canvas.draw()
 
     def undoZoom(self):
-        """Undo the last zoom operation"""
-        if len(self._zoom_history) > 0:
+        """
+        Undo the last zoom operation.
+        """
+        if len(self._zoom_history) > 1:
             prev_limits = self._zoom_history.pop()
             self.applyZoom(*prev_limits)
             return True
@@ -158,7 +203,9 @@ class FigureWidget(QWidget):
         return False
 
     def resetZoom(self):
-        """Reset zoom to initial state"""
+        """
+        Resets zoom to the initial state.
+        """
         if self._initial_limits:
             for ax, limits in zip(self.figure.axes, self._initial_limits):
                 ax.set_xlim(limits[0])
@@ -168,23 +215,40 @@ class FigureWidget(QWidget):
             self.canvas.draw()
 
     def recordCurrentZoom(self):
-        """Record current zoom state for undo functionality"""
+        """
+        Records the current zoom state for undo functionality.
+        """
         if self.current_zoom_limits:
             self._zoom_history.append(self.current_zoom_limits)
 
     def on_mouse_move(self, event):
+        """
+        Handles mouse move events for crosshair.
+        """
         if event.inaxes:
             x, y = event.xdata, event.ydata
             self.mouse_moved.emit(x, y)
             self.update_crosshair(event.inaxes, x, y)
 
     def on_external_crosshair(self, x, y):
+        """
+        Handles external crosshair signals.
+        """
         # Find the first axes to use for positioning
         axes = self.figure.get_axes()
         if axes:
             self.update_crosshair(axes[0], x, y, external=True)
 
     def update_crosshair(self, ax, x, y, external=False):
+        """
+        Updates the crosshair position.
+
+        Parameters:
+            ax (Axes): The axes to update the crosshair on.
+            x (float): The x-coordinate of the crosshair.
+            y (float): The y-coordinate of the crosshair.
+            external (bool): Whether the crosshair update is from an external signal.
+        """
         self.remove_crosshair()
 
         # Add horizontal crosshair lines to all subplots in the current figure
@@ -204,176 +268,9 @@ class FigureWidget(QWidget):
         self.canvas.draw()
 
     def remove_crosshair(self):
-        if self.crosshair_vline:
-            self.crosshair_vline.remove()
-            self.crosshair_vline = None
-        for hline in self.crosshair_hlines:
-            hline.remove()
-        self.crosshair_hlines = []
-        if self.cursor_coords:
-            self.cursor_coords.remove()
-            self.cursor_coords = None
-        self.canvas.draw()
-
-class FigureWidget(QWidget):
-    mouse_moved = pyqtSignal(float, float)
-    external_crosshair = pyqtSignal(float, float)
-    zoomChanged = pyqtSignal(object)  # Signal emitted after a zoom event
-
-    def __init__(self, well_name, parent=None):
-        super().__init__(parent)
-        self.well_name = well_name
-        self.figure = Figure()  # Remove constrained layout
-        self.canvas = FigureCanvas(self.figure)
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.canvas)
-        self.setLayout(layout)
-
-        self.crosshair_hlines = []
-        self.crosshair_vline = None
-        self.cursor_coords = None
-
-        self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
-        self.external_crosshair.connect(self.on_external_crosshair)
-
-        # Variables for zoom functionality
-        self._dragging = False
-        self._press_event = None
-        self._rect = None
-        self._zoom_history = []  # For undo functionality
-        self._initial_limits = None
-        self.current_zoom_limits = None  # Stores current zoom state
-        self.zoom_mode = None
-
-        # Connect mouse events
-        self.canvas.mpl_connect("button_press_event", self.onMousePress)
-        self.canvas.mpl_connect("motion_notify_event", self.onMouseMove)
-        self.canvas.mpl_connect("button_release_event", self.onMouseRelease)
-
-    def setZoomMode(self, mode):
-        self.zoom_mode = mode
-        if mode == "Rectangular":
-            self.canvas.setCursor(Qt.CrossCursor)
-        else:
-            self.canvas.setCursor(Qt.ArrowCursor)
-
-    def onMousePress(self, event):
-        if event.inaxes is None or self.zoom_mode != "Rectangular":
-            return
-
-        self._dragging = True
-        self._press_event = event
-        ax = event.inaxes
-        self._rect = Rectangle((event.xdata, event.ydata), 0, 0,
-                               fill=False, edgecolor='red', linestyle='--')
-        ax.add_patch(self._rect)
-        self.canvas.draw()
-
-    def onMouseMove(self, event):
-        if not self._dragging or event.inaxes is None or self._press_event is None or self._rect is None:
-            return
-
-        x0, y0 = self._press_event.xdata, self._press_event.ydata
-        x1, y1 = event.xdata, event.ydata
-        xmin = min(x0, x1)
-        ymin = min(y0, y1)
-        width = abs(x1 - x0)
-        height = abs(y1 - y0)
-        self._rect.set_xy((xmin, ymin))
-        self._rect.set_width(width)
-        self._rect.set_height(height)
-        self.canvas.draw()
-
-    def onMouseRelease(self, event):
-        if not self._dragging or event.inaxes is None or self._press_event is None:
-            return
-
-        ax = event.inaxes
-        if self._rect is not None:
-            x0, y0 = self._press_event.xdata, self._press_event.ydata
-            x1, y1 = event.xdata, event.ydata
-            xmin, xmax = sorted([x0, x1])
-            ymin, ymax = sorted([y0, y1])
-
-            # Store the zoom limits
-            self.current_zoom_limits = (xmin, xmax, ymin, ymax)
-
-            self._rect.remove()
-            self._rect = None
-            self.canvas.draw()
-
-            # Emit signal that zoom has changed
-            self.zoomChanged.emit(self)
-
-        self._dragging = False
-        self._press_event = None
-
-    def applyZoom(self, xmin, xmax, ymin, ymax):
-        """Apply zoom limits to all axes in this figure"""
-        for ax in self.figure.axes:
-            ax.set_xlim(xmin, xmax)
-            ax.set_ylim(ymax, ymin)
-        self.current_zoom_limits = (xmin, xmax, ymin, ymax)
-        self.canvas.draw()
-
-    def undoZoom(self):
-        """Undo the last zoom operation"""
-        if len(self._zoom_history) > 0:
-            prev_limits = self._zoom_history.pop()
-            self.applyZoom(*prev_limits)
-            return True
-        elif self._initial_limits:
-            # If no zoom history, revert to initial limits
-            self.resetZoom()
-        return False
-
-    def resetZoom(self):
-        """Reset zoom to initial state"""
-        if self._initial_limits:
-            for ax, limits in zip(self.figure.axes, self._initial_limits):
-                ax.set_xlim(limits[0])
-                ax.set_ylim(limits[1])
-            self.current_zoom_limits = None
-            self._zoom_history = []
-            self.canvas.draw()
-
-    def recordCurrentZoom(self):
-        """Record current zoom state for undo functionality"""
-        if self.current_zoom_limits:
-            self._zoom_history.append(self.current_zoom_limits)
-
-    def on_mouse_move(self, event):
-        if event.inaxes:
-            x, y = event.xdata, event.ydata
-            self.mouse_moved.emit(x, y)
-            self.update_crosshair(event.inaxes, x, y)
-
-    def on_external_crosshair(self, x, y):
-        # Find the first axes to use for positioning
-        axes = self.figure.get_axes()
-        if axes:
-            self.update_crosshair(axes[0], x, y, external=True)
-
-    def update_crosshair(self, ax, x, y, external=False):
-        self.remove_crosshair()
-
-        # Add horizontal crosshair lines to all subplots in the current figure
-        for sub_ax in self.figure.get_axes():
-            hline = sub_ax.axhline(y, color='red', linestyle='--', linewidth=1)
-            self.crosshair_hlines.append(hline)
-
-        # Add vertical crosshair line only to the current axis if not an external signal
-        if ax and not external:
-            self.crosshair_vline = ax.axvline(x, color='red', linestyle='--', linewidth=1)
-
-        if not external:
-            self.cursor_coords = ax.text(x, y, f'x={x:.2f}, y={y:.2f}',
-                                         transform=ax.transData, fontsize=9,
-                                         verticalalignment='bottom', horizontalalignment='left',
-                                         bbox=dict(boxstyle='round,pad=0.1', facecolor='yellow', alpha=0.5))
-        self.canvas.draw()
-
-    def remove_crosshair(self):
+        """
+        Removes the crosshair from the figure.
+        """
         if self.crosshair_vline:
             self.crosshair_vline.remove()
             self.crosshair_vline = None
@@ -386,8 +283,16 @@ class FigureWidget(QWidget):
         self.canvas.draw()
 
     def update_plot(self, data, tracks, well_top_lines=None):
+        """
+        Updates the plot with the given data and tracks.
+
+        Parameters:
+            data (DataFrame): The well log data.
+            tracks (list): The list of tracks to plot.
+            well_top_lines (list): The list of well top lines to plot.
+        """
         self.figure.clear()
-        
+
         self.data = data
         self.tracks = tracks
         n_tracks = len(tracks)
@@ -395,13 +300,18 @@ class FigureWidget(QWidget):
             ax = self.figure.add_subplot(111)
             ax.text(0.5, 0.5, "No tracks", ha='center', va='center')
         else:
-            axes = self.figure.subplots(1, n_tracks, sharey=True) if n_tracks > 1 else [self.figure.add_subplot(111)]
-            self.figure.subplots_adjust(wspace=0, hspace=0)  # Adjust the space between subplots
+            # Modify subplots creation to remove gaps
+            if n_tracks > 1:
+                axes = self.figure.subplots(1, n_tracks, sharey=True, gridspec_kw={'wspace': 0})
+            else:
+                axes = [self.figure.add_subplot(111)]
+
             depth = data['DEPT']
 
             for idx, (ax, track) in enumerate(zip(axes, tracks)):
                 ax.set_facecolor(track.bg_color)  # Apply Background Color
-
+                if idx != 0:
+                    ax.tick_params(left=False, labelleft=False)
                 track.ax = ax  # Store the axis for later reference
                 valid_curves = []
                 lines_list = []
@@ -478,6 +388,7 @@ class FigureWidget(QWidget):
                         pass
 
                 # Remove x-axis labels for the primary axis
+                ax.set_xticks([])
                 ax.set_xticklabels([])
 
             # Add a title to the figure using the well name in a box
@@ -490,11 +401,12 @@ class FigureWidget(QWidget):
                     for (top, md) in well_top_lines:
                         track.ax.axhline(y=md, color='red', linestyle='--', linewidth=1)
                         track.ax.text(
-                            0.005, md, f"{top}",  # Adjust x-coordinate to 0.005 for left alignment
+                            0.0005, md, f"{top}",  # Adjust x-coordinate to 0.02 for left alignment
                             transform=track.ax.get_yaxis_transform(),
                             color='red', fontsize=8, horizontalalignment='left', verticalalignment='bottom'
                         )
 
+        self.figure.tight_layout()  # Apply tight layout
         self.canvas.draw()
 
         # Store initial limits
@@ -507,6 +419,9 @@ class FigureWidget(QWidget):
             self.applyZoom(*self.current_zoom_limits)
 
 class CurveControl(QWidget):
+    """
+    Widget for controlling the properties of a curve.
+    """
     changed = pyqtSignal()
 
     def __init__(self, curve_number, curves, parent=None):
@@ -569,7 +484,7 @@ class CurveControl(QWidget):
 
         xy_range_layout.addWidget(QLabel("X-max:"))
         self.x_max = QLineEdit()
-        self.x_max.setStyleSheet("background-color: White; color: blue; font: 10pt;")
+        self.x_max.setStyleSheet("background-color: White; color: blue; font: 12pt;")
         self.x_max.setFixedWidth(50)
         self.x_max.setPlaceholderText("Auto")
         self.x_max.textChanged.connect(self.changed.emit)  # Connect to changed signal
@@ -584,6 +499,9 @@ class CurveControl(QWidget):
         layout.addLayout(xy_range_layout)
 
     def select_color(self):
+        """
+        Opens a color picker to change the curve color.
+        """
         color = QColorDialog.getColor()
         if color.isValid():
             self.color = color.name()
@@ -593,11 +511,19 @@ class CurveControl(QWidget):
             self.changed.emit()
 
     def get_line_style(self):
-        """Returns the Matplotlib line style based on selection."""
+        """
+        Returns the Matplotlib line style based on selection.
+
+        Returns:
+            str: The Matplotlib line style.
+        """
         styles = {"Solid": "-", "Dashed": "--", "Dotted": ":", "Dash-dot": "-."}
         return styles[self.line_style_box.currentText()]
 
 class TrackControl(QWidget):
+    """
+    Widget for controlling the properties of a track.
+    """
     changed = pyqtSignal()
 
     def __init__(self, number, curves, parent=None):
@@ -701,7 +627,9 @@ class TrackControl(QWidget):
         self.add_curve(curves)  # Start with one curve
 
     def select_bg_color(self):
-        """Opens a color picker to change background color and update the button."""
+        """
+        Opens a color picker to change the background color and update the button.
+        """
         color = QColorDialog.getColor()
         if color.isValid():
             self.bg_color = color.name()
@@ -709,6 +637,12 @@ class TrackControl(QWidget):
             self.changed.emit()
 
     def add_curve(self, curves):
+        """
+        Adds a new curve to the track.
+
+        Parameters:
+            curves (list): The list of available curves.
+        """
         self.curve_count += 1  # Increment curve number
         curve = CurveControl(self.curve_count, curves)  # Pass curve_number
         curve.changed.connect(self.changed.emit)
@@ -718,6 +652,12 @@ class TrackControl(QWidget):
         self.changed.emit()
 
     def remove_curve(self, index):
+        """
+        Removes a curve from the track.
+
+        Parameters:
+            index (int): The index of the curve to remove.
+        """
         curve = self.curve_tabs.widget(index)
         if curve:
             self.curves.remove(curve)
@@ -727,12 +667,17 @@ class TrackControl(QWidget):
             self.changed.emit()
 
     def update_curve_numbers(self):
-        """Renumbers curves after a deletion or addition."""
+        """
+        Renumbers curves after a deletion or addition.
+        """
         for i, curve in enumerate(self.curves, start=1):
             curve.curve_label.setText(f"Curve {i}:")
             self.curve_tabs.setTabText(i - 1, f"Curve {i}")
 
 class WellLogViewer(QMainWindow):
+    """
+    Main window for the Well Log Viewer application.
+    """
     def __init__(self):
         super().__init__()
         self.wells = {}
@@ -741,23 +686,30 @@ class WellLogViewer(QMainWindow):
         self.tracks = []
         self.figure_widgets = {}
         self.show_well_tops = True  # New attribute to track well top visibility
-        self.sync_zoom_enabled = False
+        self.sync_zoom_enabled = True
         self.current_single_zoom_well = None  # Track which well has single zoom
         self.single_zoom_limits = None  # Store single zoom limits
         self.sync_zoom_limits = None  # Store sync zoom limits
-        self.share_y_axis_enabled = False  # New attribute to track shared Y-axis state
+        self.share_y_axis_enabled = True  # New attribute to track shared Y-axis state
+        self.link_well_tops_enabled = False  # New attribute for well top connections
         self.initUI()
         self.setWindowIcon(QIcon('images/ONGC_Logo.png'))
         # Enable single zoom by default
         self.enableSingleZoom()
 
     def initUI(self):
+        """
+        Initializes the user interface.
+        """
         self.setWindowTitle('Well Log Viewer')
         self.setGeometry(100, 100, 1200, 800)
 
         self.figure_scroll = QScrollArea()
         self.figure_container = QWidget()
         self.figure_layout = QHBoxLayout(self.figure_container)
+        self.figure_layout.setContentsMargins(0, 0, 0, 0)  # Set contents margins to zero
+        self.figure_layout.setSpacing(0)  # Set spacing to zero
+
         self.figure_scroll.setWidgetResizable(True)
         self.figure_scroll.setWidget(self.figure_container)
         self.setCentralWidget(self.figure_scroll)
@@ -796,8 +748,13 @@ class WellLogViewer(QMainWindow):
         self.toggle_well_tops_action.triggered.connect(self.toggle_well_tops)
         menubar.addAction(self.toggle_well_tops_action)
 
+        # New action: Toggle Well Top Connections
+        self.link_well_tops_action = QAction("Link Well Tops", self, checkable=True)
+        self.link_well_tops_action.toggled.connect(self.toggle_link_well_tops)
+        menubar.addAction(self.link_well_tops_action)
+
         # New actions for zoom functionality
-        self.sync_zoom_action = QAction("Enable Sync Zoom", self, checkable=True)
+        self.sync_zoom_action = QAction("Disable Sync Zoom", self, checkable=True)
         self.sync_zoom_action.toggled.connect(self.onSyncZoomToggled)
         menubar.addAction(self.sync_zoom_action)
 
@@ -810,7 +767,7 @@ class WellLogViewer(QMainWindow):
         menubar.addAction(self.reset_zoom_action)
 
         # New action for sharing Y-axis limits
-        self.share_y_axis_action = QAction("Link Y Axis", self, checkable=True)
+        self.share_y_axis_action = QAction("Disable Link Y Axis", self, checkable=True)
         self.share_y_axis_action.toggled.connect(self.onShareYAxisToggled)
         menubar.addAction(self.share_y_axis_action)
 
@@ -853,24 +810,45 @@ class WellLogViewer(QMainWindow):
         dock_widget.setLayout(dock_layout)
         self.dock.setWidget(dock_widget)
 
+    def toggle_link_well_tops(self, checked):
+        """
+        Toggle the well top connections feature.
+
+        Parameters:
+            checked (bool): Whether the feature is enabled.
+        """
+        self.link_well_tops_enabled = checked
+        self.link_well_tops_action.setText("Unlink Well Tops" if checked else "Link Well Tops")
+        self.update_plot()
+
     def onShareYAxisToggled(self, checked):
-        """Handle share Y-axis toggle."""
+        """
+        Handle share Y-axis toggle.
+
+        Parameters:
+            checked (bool): Whether the feature is enabled.
+        """
         self.share_y_axis_enabled = checked
         if checked:
-            self.share_y_axis_action.setText("Unlink Y Axis")
+            self.share_y_axis_action.setText("Disable Link Y Axis")
             self.synchronizeYAxisLimits()
         else:
-            self.share_y_axis_action.setText("Link Y Axis")
+            self.share_y_axis_action.setText("Enable Link Y Axis")
             self.update_plot()
 
     def synchronizeYAxisLimits(self):
-        """Synchronize Y-axis limits across all wells."""
+        """
+        Synchronize Y-axis limits across all wells.
+        """
         if not self.figure_widgets:
             return
 
         # Get the Y-axis limits from the selected wells
-        selected_wells = [self.well_list.item(i).text() for i in range(self.well_list.count())
-                          if self.well_list.item(i).checkState() == Qt.Checked]
+        selected_wells = [
+            self.well_list.item(i).text()
+            for i in range(self.well_list.count())
+            if self.well_list.item(i).checkState() == Qt.Checked
+        ]
 
         y_min = float('inf')
         y_max = float('-inf')
@@ -884,13 +862,19 @@ class WellLogViewer(QMainWindow):
         # Apply the Y-axis limits to all wells
         for idx, widget in enumerate(self.figure_widgets.values()):
             for ax in widget.figure.axes:
-                ax.set_ylim(y_max, y_min)
-                if idx != 0:  # Hide Y-axis tick labels for all but the first well
-                    ax.tick_params(labelleft=False)
+                ax.set_ylim(y_max, y_min)  # Inverted to suit depth plots if needed
+                if idx != 0:  # Hide ticks and tick labels for all but the first well
+                    ax.tick_params(left=False, labelleft=False)
+                    ax.set_ylabel(None)
             widget.canvas.draw()
 
     def onSyncZoomToggled(self, checked):
-        """Handle sync zoom toggle."""
+        """
+        Handle sync zoom toggle.
+
+        Parameters:
+            checked (bool): Whether the feature is enabled.
+        """
         self.sync_zoom_enabled = checked
         if checked:
             self.disableSingleZoom()
@@ -905,17 +889,21 @@ class WellLogViewer(QMainWindow):
 
         else:
             self.disableSyncZoom()
-            self.sync_zoom_action.setText("Enable Sync Zoom")
+            self.sync_zoom_action.setText("Sync Zoom")
             self.enableSingleZoom()
 
     def enableSyncZoom(self):
-        """Enable sync zoom mode"""
+        """
+        Enable sync zoom mode.
+        """
         for widget in self.figure_widgets.values():
             widget.setZoomMode("Rectangular")
             widget.zoomChanged.connect(self.handleSyncZoom)
 
     def disableSyncZoom(self):
-        """Disable sync zoom mode"""
+        """
+        Disable sync zoom mode.
+        """
         for widget in self.figure_widgets.values():
             widget.setZoomMode("Rectangular")
             try:
@@ -925,13 +913,17 @@ class WellLogViewer(QMainWindow):
             widget.zoomChanged.connect(self.handleSingleZoom)
 
     def enableSingleZoom(self):
-        """Enable single zoom mode (default)."""
+        """
+        Enable single zoom mode (default).
+        """
         for widget in self.figure_widgets.values():
             widget.setZoomMode("Rectangular")
             widget.zoomChanged.connect(self.handleSingleZoom)
 
     def disableSingleZoom(self):
-        """Disable single zoom mode."""
+        """
+        Disable single zoom mode.
+        """
         for widget in self.figure_widgets.values():
             try:
                 widget.zoomChanged.disconnect(self.handleSingleZoom)
@@ -939,7 +931,12 @@ class WellLogViewer(QMainWindow):
                 pass
 
     def handleSyncZoom(self, sender):
-        """Handle sync zoom event - apply to all wells"""
+        """
+        Handle sync zoom event - apply to all wells.
+
+        Parameters:
+            sender (FigureWidget): The widget that triggered the zoom event.
+        """
         if not sender.current_zoom_limits:
             return
 
@@ -951,7 +948,12 @@ class WellLogViewer(QMainWindow):
             widget.recordCurrentZoom()
 
     def handleSingleZoom(self, sender):
-        """Handle single zoom event - apply to the selected well only"""
+        """
+        Handle single zoom event - apply to the selected well only.
+
+        Parameters:
+            sender (FigureWidget): The widget that triggered the zoom event.
+        """
         if not sender.current_zoom_limits:
             return
 
@@ -966,7 +968,9 @@ class WellLogViewer(QMainWindow):
                 widget.recordCurrentZoom()
 
     def undoZoom(self):
-        """Undo the last zoom operation"""
+        """
+        Undo the last zoom operation.
+        """
         if self.sync_zoom_enabled:
             for widget in self.figure_widgets.values():
                 widget.undoZoom()
@@ -976,7 +980,9 @@ class WellLogViewer(QMainWindow):
                 widget.undoZoom()
 
     def resetZoom(self):
-        """Reset zoom for all wells"""
+        """
+        Reset zoom for all wells.
+        """
         if self.sync_zoom_enabled:
             for widget in self.figure_widgets.values():
                 widget.resetZoom()
@@ -989,14 +995,36 @@ class WellLogViewer(QMainWindow):
                 self.single_zoom_limits = None
 
     def toggle_well_tops(self):
-        """Toggle the visibility of well tops."""
+        """
+        Toggle the visibility of well tops.
+        """
         self.show_well_tops = not self.show_well_tops
         self.toggle_well_tops_action.setText("Hide Well Tops" if self.show_well_tops else "Show Well Tops")
         self.update_plot()
 
     def update_plot(self):
+        """
+        Main update method that handles well selection/deselection.
+        """
         selected_wells = [self.well_list.item(i).text() for i in range(self.well_list.count())
                         if self.well_list.item(i).checkState() == Qt.Checked]
+
+        # First remove all connection subplots
+        self.remove_connection_subplots()
+
+        # Update main well plots
+        #self.update_well_plots(selected_wells)
+
+        # Draw connections if enabled
+        if self.link_well_tops_enabled and len(selected_wells) > 1:
+            self.draw_well_top_connections()
+
+        # First remove all connection subplots (anything that's not a main well widget)
+        for i in reversed(range(self.figure_layout.count())):
+            widget = self.figure_layout.itemAt(i).widget()
+            if widget and widget not in self.figure_widgets.values():
+                widget.setParent(None)
+                widget.deleteLater()
 
         # Disconnect existing signals to prevent multiple connections
         for widget in self.figure_widgets.values():
@@ -1052,24 +1080,214 @@ class WellLogViewer(QMainWindow):
         if self.share_y_axis_enabled:
             self.synchronizeYAxisLimits()
 
+        # Draw well top connections if enabled
+        if self.link_well_tops_enabled and len(selected_wells) > 1:
+            self.draw_well_top_connections()
+
+    def remove_connection_subplots(self):
+        """
+        Remove all connection subplots while preserving well plots.
+        """
+        for i in reversed(range(self.figure_layout.count())):
+            widget = self.figure_layout.itemAt(i).widget()
+            if widget and not hasattr(widget, 'well_name'):
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def draw_well_top_connections(self):
+        """
+        Draw perfectly aligned connections between well tops.
+        """
+        selected_wells = self.get_ordered_visible_wells()
+        if len(selected_wells) < 2 or not self.selected_top_names:
+            return
+
+        # Get reference dimensions from first well plot
+        ref_well = self.figure_widgets[selected_wells[0]]
+        ref_fig = ref_well.figure
+        plt_bbox = ref_fig.axes[-1].get_position()  # Get position of last track's axes
+
+        for i in range(len(selected_wells)-1):
+            well1, well2 = selected_wells[i], selected_wells[i+1]
+            widget1 = self.figure_widgets[well1]
+            widget2 = self.figure_widgets[well2]
+
+            # Create connection figure with identical layout parameters
+            conn_fig = Figure()  # Use tight layout
+            conn_fig.set_tight_layout(True)
+            canvas = FigureCanvas(conn_fig)
+            canvas.setFixedSize(60, widget1.height())
+
+            # Create connection axes with matching spine positions
+            ax = conn_fig.add_subplot(111)
+            ax.set_position(plt_bbox)  # Match main plot's axes position
+
+            # Configure spines to match well plot styling
+            ax.spines['top'].set_visible(True)
+            ax.spines['top'].set_position(('axes', 1.0))  # Align with well plot's top spine
+            ax.spines['top'].set_color('#404040')
+            ax.spines['top'].set_linewidth(0.8)
+            for spine in ['left', 'right', 'bottom']:
+                ax.spines[spine].set_visible(False)
+
+            # Match axis limits with well plots
+            ymin = max(widget1.figure.axes[0].get_ylim()[0],
+                    widget2.figure.axes[0].get_ylim()[0])
+            ymax = min(widget1.figure.axes[0].get_ylim()[1],
+                    widget2.figure.axes[0].get_ylim()[1])
+            ax.set_ylim(ymin, ymax)
+            ax.set_axis_off()
+
+            # Get common well tops between adjacent wells
+            tops1 = {t:md for t,md in self.well_tops.get(well1, [])
+                    if t in self.selected_top_names}
+            tops2 = {t:md for t,md in self.well_tops.get(well2, [])
+                    if t in self.selected_top_names}
+            common_tops = set(tops1.keys()) & set(tops2.keys())
+
+            # Draw connection lines with precise positioning
+            for top in common_tops:
+                y1 = tops1[top]
+                y2 = tops2[top]
+
+                # Draw line using figure coordinates for perfect alignment
+                ax.plot([0.05, 0.95],  # Use 5% padding on both sides
+                    [y1, y2],
+                    color='#2b70b7',
+                    linewidth=1.2,
+                    alpha=0.8,
+                    solid_capstyle='round')
+
+                # Add label at midpoint
+                ax.text(0.5, (y1+y2)/2, top,
+                    fontsize=8,
+                    ha='center',
+                    va='center',
+                    rotation=90,
+                    bbox=dict(facecolor='white', alpha=0.85,
+                                edgecolor='none', pad=0))
+
+            # Create container widget and insert in layout
+            conn_widget = QWidget()
+            conn_widget.setFixedHeight(widget1.height())
+            layout = QVBoxLayout(conn_widget)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addWidget(canvas)
+
+            insert_position = self.figure_layout.indexOf(widget1) + 1
+            self.figure_layout.insertWidget(insert_position, conn_widget)
+            canvas.draw()
+
+    def get_top_axis_position(self, well_widget):
+        """
+        Get the top axis position from a well widget.
+
+        Parameters:
+            well_widget (FigureWidget): The well widget to get the top axis position from.
+
+        Returns:
+            float: The top axis position.
+        """
+        for ax in well_widget.figure.axes:
+            if ax.xaxis.get_ticks_position() == 'top':
+                return ax.get_position().y1
+        return 2#0.95  # Default if not found
+
+    def draw_connection_lines(self, ax, top_dict, well1, well2):
+        """
+        Draw connection lines between matching well tops.
+
+        Parameters:
+            ax (Axes): The axes to draw the connection lines on.
+            top_dict (dict): The dictionary containing well top information.
+            well1 (str): The first well name.
+            well2 (str): The second well name.
+        """
+        for top_name in self.selected_top_names:
+            if well1 in top_dict[top_name] and well2 in top_dict[top_name]:
+                md1 = top_dict[top_name][well1]
+                md2 = top_dict[top_name][well2]
+
+                ax.plot([0.1, 0.9], [md1, md2],
+                    color='blue', linestyle='-', linewidth=1.5, alpha=0.8)
+
+                ax.text(0.5, (md1 + md2)/2, top_name,
+                    ha='center', va='center',
+                    fontsize=8,
+                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
+
+    def get_ordered_visible_wells(self):
+        """
+        Get wells in their current display order.
+
+        Returns:
+            list: The list of wells in their current display order.
+        """
+        wells = []
+        for i in range(self.figure_layout.count()):
+            widget = self.figure_layout.itemAt(i).widget()
+            if widget and hasattr(widget, 'well_name'):
+                wells.append(widget.well_name)
+        return wells
+
+    def get_widget_position(self, well_name):
+        """
+        Get layout position of a well widget.
+
+        Parameters:
+            well_name (str): The name of the well.
+
+        Returns:
+            int: The layout position of the well widget.
+        """
+        for i in range(self.figure_layout.count()):
+            widget = self.figure_layout.itemAt(i).widget()
+            if widget and hasattr(widget, 'well_name') and widget.well_name == well_name:
+                return i
+        return None
+
     def change_background_color(self):
-        """Opens a color picker to change the background color."""
+        """
+        Opens a color picker to change the background color.
+        """
         color = QColorDialog.getColor()
         if color.isValid():
             self.setStyleSheet(f"QWidget {{ background-color: {color.name()}; }}")
 
     def toggle_controls(self):
+        """
+        Toggles the visibility of the controls dock.
+        """
         self.dock.setVisible(not self.dock.isVisible())
 
     def load_las_files(self):
+        """
+        Loads LAS files and updates the well list.
+        """
         options = QFileDialog.Options()
         files, _ = QFileDialog.getOpenFileNames(self, "Select LAS Files", "", "LAS Files (*.las);;All Files (*)", options=options)
         if files:
-            for file in files:
+            progress = QProgressDialog("Loading LAS Files...", "Cancel", 0, len(files), self)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowTitle("Loading")
+            progress.setAutoClose(True)
+
+            for i, file in enumerate(files):
+                progress.setValue(i)
+                if progress.wasCanceled():
+                    break
                 self.load_las_file(file)
+
+            progress.setValue(len(files))
             self.update_plot()
 
     def load_las_file(self, path):
+        """
+        Loads a LAS file and adds it to the well list.
+
+        Parameters:
+            path (str): The path to the LAS file.
+        """
         try:
             las = lasio.read(path)
             df = las.df()
@@ -1091,13 +1309,21 @@ class WellLogViewer(QMainWindow):
             print(f"Error loading {path}: {str(e)}")
 
     def load_well_tops(self):
+        """
+        Loads well tops from a file and updates the well tops list.
+        """
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Well Tops File", "", "Text Files (*.txt *.csv)"
         )
         if not file_path:
             return
-        try:
 
+        progress = QProgressDialog("Loading Well Tops...", "Cancel", 0, 0, self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowTitle("Loading")
+        progress.setAutoClose(True)
+
+        try:
             # Determine the delimiter based on file content
             delimiter = ','
             if file_path.endswith('.txt'):
@@ -1107,17 +1333,15 @@ class WellLogViewer(QMainWindow):
 
                     if has_comma:
                         df = pd.read_csv(
-                                file_path,
-                                delimiter=',',
-                                header=None,
-                                engine='python',
-                                on_bad_lines='skip')
+                            file_path,
+                            delimiter=',',
+                            header=None,
+                            engine='python',
+                            on_bad_lines='skip')
                     else:
-                        # delimiter = None
-                        # Read the file with the appropriate delimiter
                         df = pd.read_csv(
                             file_path,
-                            delim_whitespace=True,# if delimiter is None else False,
+                            delim_whitespace=True,
                             header=None,
                             engine='python',
                             on_bad_lines='skip')
@@ -1143,7 +1367,11 @@ class WellLogViewer(QMainWindow):
             df.columns = ["well", "top", "md"]
 
             # Process well tops
+            progress.setMaximum(len(df))
             for idx, row in df.iterrows():
+                progress.setValue(idx)
+                if progress.wasCanceled():
+                    break
                 well = str(row["well"]).strip()
                 top = str(row["top"]).strip()
                 try:
@@ -1157,8 +1385,13 @@ class WellLogViewer(QMainWindow):
 
         except Exception as e:
             print(f"Error loading well tops from {file_path}: {str(e)}")
+        finally:
+            progress.setValue(len(df))
 
     def update_well_tops_list(self):
+        """
+        Updates the well tops list with unique top names.
+        """
         self.well_tops_list.clear()
         unique_tops = set()
         # Aggregate unique top names from all wells.
@@ -1175,6 +1408,12 @@ class WellLogViewer(QMainWindow):
             self.well_tops_list.addItem(item)
 
     def well_top_item_changed(self, item):
+        """
+        Handles the change in well top item selection.
+
+        Parameters:
+            item (QListWidgetItem): The well top item that was changed.
+        """
         top = item.data(Qt.UserRole)
         if not top:
             return
@@ -1185,6 +1424,9 @@ class WellLogViewer(QMainWindow):
         self.update_plot()
 
     def add_track(self):
+        """
+        Adds a new track to the plot.
+        """
         if not self.wells:
             return
 
@@ -1197,6 +1439,12 @@ class WellLogViewer(QMainWindow):
         self.update_plot()
 
     def delete_track(self, index):
+        """
+        Deletes a track from the plot.
+
+        Parameters:
+            index (int): The index of the track to delete.
+        """
         track = self.track_tabs.widget(index)
         if track:
             self.tracks.remove(track)
@@ -1206,14 +1454,18 @@ class WellLogViewer(QMainWindow):
             self.update_plot()
 
     def renumber_tracks(self):
-        """Renumbers tracks and update their tab titles."""
+        """
+        Renumbers tracks and updates their tab titles.
+        """
         for i, track in enumerate(self.tracks, start=1):
             track.number = i
             track.update_curve_numbers()  # Renumber curves within the track
             self.track_tabs.setTabText(i - 1, f"Track {i}")
 
     def save_template(self):
-        """Save the current template settings to a .pkl file."""
+        """
+        Saves the current template settings to a .pkl file.
+        """
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Template", "", "Template Files (*.pkl)")
         if file_path:
             file_path = file_path + ".pkl"
@@ -1227,7 +1479,9 @@ class WellLogViewer(QMainWindow):
                 pickle.dump(template_data, f)
 
     def load_template(self):
-        """Load template settings from a .pkl file."""
+        """
+        Loads template settings from a .pkl file.
+        """
         file_path, _ = QFileDialog.getOpenFileName(self, "Load Template", "", "Template Files (*.pkl)")
         if file_path:
             with open(file_path, 'rb') as f:
@@ -1235,7 +1489,15 @@ class WellLogViewer(QMainWindow):
             self.apply_template(template_data)
 
     def get_track_settings(self, track):
-        """Get the settings of a track."""
+        """
+        Gets the settings of a track.
+
+        Parameters:
+            track (TrackControl): The track to get the settings from.
+
+        Returns:
+            dict: The settings of the track.
+        """
         return {
             'bg_color': track.bg_color,
             'grid': track.grid.isChecked(),
@@ -1246,7 +1508,15 @@ class WellLogViewer(QMainWindow):
         }
 
     def get_curve_settings(self, curve):
-        """Get the settings of a curve."""
+        """
+        Gets the settings of a curve.
+
+        Parameters:
+            curve (CurveControl): The curve to get the settings from.
+
+        Returns:
+            dict: The settings of the curve.
+        """
         return {
             #'curve_name': curve.curve_box.currentText(),
             'width': curve.width.value(),
@@ -1259,7 +1529,12 @@ class WellLogViewer(QMainWindow):
         }
 
     def apply_template(self, template_data):
-        """Apply the template settings."""
+        """
+        Applies the template settings.
+
+        Parameters:
+            template_data (dict): The template data to apply.
+        """
         # Clear existing tracks
         while self.track_tabs.count() > 0:
             self.delete_track(0)

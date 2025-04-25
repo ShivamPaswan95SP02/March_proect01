@@ -1,0 +1,300 @@
+/* Premium Light Theme - Enhanced with Blue Accents */
+
+/* Base widget style */
+QWidget {
+    font-family: 'Segoe UI', system-ui;
+    font-size: 13px;
+    color: #333333;
+    background: transparent;
+    letter-spacing: 0.02em;
+}
+
+/* Main window */
+QMainWindow {
+    background-color: #F7F7F7;
+    border: 1px solid #DADADA;
+}
+
+/* Sophisticated Menu Bar with Blue Accents */
+QMenuBar {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #E5F1FB, stop:1 #D0E7F9);
+    color: #333333;
+    border-bottom: 1px solid #CCCCCC;
+    padding: 6px;
+    spacing: 8px;
+}
+
+QMenuBar::item {
+    padding: 6px 14px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+QMenuBar::item:selected {
+    background-color: rgba(0, 120, 215, 0.3);  /* Microsoft blue accent */
+    color: white;
+    border: 1px solid rgba(0, 120, 215, 0.5);
+}
+
+/* Premium Context Menus */
+QMenu {
+    background-color: #FFFFFF;
+    border: 1px solid #CCCCCC;
+    color: #333333;
+    padding: 8px 0;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+}
+
+QMenu::item {
+    padding: 8px 32px;
+    min-width: 160px;
+}
+
+QMenu::item:selected {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0078D7, stop:1 #005A9E);
+    color: white;
+}
+
+/* Enhanced Dock Widgets */
+QDockWidget {
+    border: 1px solid #CCCCCC;
+    background: #F7F7F7;
+    border-radius: 6px;
+    titlebar-close-icon: url(:/icons/close_dark.svg);
+    titlebar-normal-icon: url(:/icons/undock_dark.svg);
+}
+
+QDockWidget::title {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #E5F1FB, stop:1 #D0E7F9);
+    padding: 10px;
+    color: #333333;
+    border-bottom: 1px solid #CCCCCC;
+    border-radius: 5px 5px 0 0;
+}
+
+/* Premium List Views */
+QListWidget {
+    background-color: #FFFFFF;
+    color: #333333;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+    outline: 0;
+}
+
+QListWidget::item {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(204, 204, 204, 0.5);
+}
+
+QListWidget::item:selected {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0078D7, stop:1 #005A9E);
+    color: white;
+    border-radius: 3px;
+}
+
+/* Professional Buttons with Blue Hover */
+QPushButton {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #F0F0F0);
+    color: #333333;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+    padding: 8px 18px;
+    font-weight: 500;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+QPushButton:hover {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #E6F0FC, stop:1 #D0E7F9);
+    border-color: #0078D7;
+    transform: translateY(-1px);
+}
+
+QPushButton:pressed {
+    background-color: #CCE4F7;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+QPushButton#deleteCurveBtn {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #E54D42, stop:1 #D83B3B);
+    border-color: #C23535;
+    min-width: 20px;
+    max-width: 20px;
+    min-height: 20px;
+    max-height: 20px;
+}
+
+QPushButton#deleteCurveBtn:hover {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FF6B6B, stop:1 #E54D42);
+    border-color: #D83B3B;
+}
+
+/* Elegant Checkboxes with Blue Checkmark */
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #BBBBBB;
+    background: #FFFFFF;
+    border-radius: 4px;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #0078D7;
+    border-color: #005A9E;
+    image: url(:/icons/checkmark_thin_dark.svg);
+}
+
+/* Premium Input Fields */
+QLineEdit, QPlainTextEdit, QComboBox, QSpinBox {
+    background-color: #FFFFFF;
+    color: #333333;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+    padding: 7px 12px;
+    selection-background-color: #0078D7;
+    font: inherit;
+}
+
+QComboBox::drop-down {
+    border-left: 1px solid #CCCCCC;
+    width: 24px;
+}
+
+/* Modern Tab Widget */
+QTabWidget::pane {
+    border: 1px solid #CCCCCC;
+    background: #F7F7F7;
+    border-radius: 6px;
+    margin: 4px;
+}
+
+QTabBar::tab {
+    background-color: #EAEAEA;
+    color: #666666;
+    border: 1px solid #CCCCCC;
+    padding: 10px 24px;
+    margin-right: 2px;
+    border-radius: 4px 4px 0 0;
+    transition: all 0.2s ease;
+}
+
+QTabBar::tab:selected {
+    background-color: #F7F7F7;
+    color: #0078D7;
+    border-bottom: 3px solid #0078D7;
+    margin-bottom: -1px;
+}
+
+/* Enhanced Sliders */
+QSlider::groove:horizontal {
+    background: #CCCCCC;
+    height: 6px;
+    border-radius: 3px;
+}
+
+QSlider::handle:horizontal {
+    background: #0078D7;
+    border: 2px solid #005A9E;
+    width: 16px;
+    margin: -6px 0;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Professional Scrollbars with Blue Handle */
+QScrollBar:vertical {
+    background: #F7F7F7;
+    width: 10px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical {
+    background: #0078D7;
+    min-height: 30px;
+    border-radius: 4px;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+/* Status Bar */
+QStatusBar {
+    background-color: #F7F7F7;
+    color: #666666;
+    border-top: 1px solid #CCCCCC;
+    padding: 6px 12px;
+}
+
+/* Tooltips */
+QToolTip {
+    color: #333333;
+    background-color: #FFFFFF;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+    padding: 8px;
+    opacity: 240;
+}
+
+/* Progress Bars */
+QProgressBar {
+    background-color: #F0F0F0;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+    height: 14px;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background-color: #0078D7;
+    border-radius: 3px;
+    margin: 1px;
+}
+
+/* Group Boxes */
+QGroupBox {
+    border: 1px solid #CCCCCC;
+    border-radius: 6px;
+    margin-top: 20px;
+    padding-top: 16px;
+    background-color: #F7F7F7;
+}
+
+QGroupBox::title {
+    color: #666666;
+    subcontrol-origin: margin;
+    left: 16px;
+    padding: 0 4px;
+}
+
+/* Table Views */
+QTableView {
+    background: #FFFFFF;
+    border: 1px solid #CCCCCC;
+    gridline-color: #DDDDDD;
+    selection-background-color: #0078D7;
+    selection-color: white;
+}
+
+QHeaderView::section {
+    background-color: #EFEFEF;
+    color: #333333;
+    padding: 8px;
+    border: 1px solid #CCCCCC;
+}
+
+/* List View Indicators */
+QListView::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #BBBBBB;
+    background: #FFFFFF;
+    border-radius: 4px;
+}
+
+QListView::indicator:checked {
+    background-color: #0078D7;
+    border-color: #005A9E;
+    image: url(:/icons/checkmark_thin_dark.svg);
+}

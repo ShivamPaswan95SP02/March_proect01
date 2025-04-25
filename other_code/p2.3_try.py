@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QMenu, QVBoxLayout, QFormLayout, QLabel, QLineEdit,
     QDialogButtonBox, QMainWindow, QDockWidget, QListWidget,
     QListWidgetItem, QWidget, QComboBox, QPushButton, QCheckBox, QSpinBox,
-    QScrollArea, QSizePolicy , QAction, QColorDialog, QTabWidget, QFrame, QApplication, QToolBar
+    QScrollArea,QSizePolicy,QProgressDialog, QAction, QColorDialog, QTabWidget, QFrame, QApplication, QToolBar
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -17,21 +17,11 @@ import pandas as pd
 import numpy as np
 from matplotlib.patches import Rectangle
 from collections import defaultdict
-from PyQt5.QtWidgets import QProgressDialog
 
 # Update the overall font size on plots
 plt.rcParams.update({'font.size': 8.5})
 
 def loadStyleSheet(fileName):
-    """
-    Loads a stylesheet from a file.
-
-    Parameters:
-        fileName (str): The path to the stylesheet file.
-
-    Returns:
-        str: The content of the stylesheet file.
-    """
     try:
         with open(fileName, "r") as f:
             return f.read()
@@ -41,9 +31,6 @@ def loadStyleSheet(fileName):
 
 # --- Custom QListWidget: Clicking on an item's label toggles its check state ---
 class ClickableListWidget(QListWidget):
-    """
-    Custom QListWidget that allows toggling the check state of an item by clicking on its label.
-    """
     def mousePressEvent(self, event):
         item = self.itemAt(event.pos())
         if item is not None:
@@ -66,10 +53,8 @@ class FigureWidget(QWidget):
         super().__init__(parent)
         self.well_name = well_name
         self.figure = Figure(layout="constrained")  # Use constrained layout
-        self.figure.set_constrained_layout_pads(w_pad=0, h_pad=0, wspace=0, hspace=0)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  # Allow horizontal expansion
 
-
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.canvas = FigureCanvas(self.figure)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)  # Set contents margins to zero
@@ -245,8 +230,7 @@ class FigureWidget(QWidget):
         else:
             # Modify subplots creation to remove gaps
             if n_tracks > 1:
-                axes = self.figure.subplots(1, n_tracks, sharey=True, 
-                                            gridspec_kw={'wspace': 0})
+                axes = self.figure.subplots(1, n_tracks, sharey=True, gridspec_kw={'wspace': 0})
             else:
                 axes = [self.figure.add_subplot(111)]
 
@@ -254,7 +238,8 @@ class FigureWidget(QWidget):
 
             for idx, (ax, track) in enumerate(zip(axes, tracks)):
                 ax.set_facecolor(track.bg_color)  # Apply Background Color
-
+                if idx != 0:
+                    ax.tick_params(left=False, labelleft=False)
                 track.ax = ax  # Store the axis for later reference
                 valid_curves = []
                 lines_list = []
@@ -295,12 +280,12 @@ class FigureWidget(QWidget):
                     # Apply individual x-axis limits for each curve
                     if curve.x_min.text():
                         try:
-                            twin_ax.set_xlim(int(curve.x_min.text()), twin_ax.get_xlim()[1])
+                            twin_ax.set_xlim(float(curve.x_min.text()), twin_ax.get_xlim()[1])
                         except ValueError:
                             pass
                     if curve.x_max.text():
                         try:
-                            twin_ax.set_xlim(twin_ax.get_xlim()[0], int(curve.x_max.text()))
+                            twin_ax.set_xlim(twin_ax.get_xlim()[0], float(curve.x_max.text()))
                         except ValueError:
                             pass
 
@@ -331,6 +316,7 @@ class FigureWidget(QWidget):
                         pass
 
                 # Remove x-axis labels for the primary axis
+                ax.set_xticks([])
                 ax.set_xticklabels([])
 
             # Add a title to the figure using the well name in a box
@@ -343,13 +329,11 @@ class FigureWidget(QWidget):
                     for (top, md) in well_top_lines:
                         track.ax.axhline(y=md, color='red', linestyle='--', linewidth=1)
                         track.ax.text(
-                            0.005, md, f"{top}",  # Adjust x-coordinate to 0.005 for left alignment
+                            0.0005, md, f"{top}",  # Adjust x-coordinate to 0.02 for left alignment
                             transform=track.ax.get_yaxis_transform(),
                             color='red', fontsize=8, horizontalalignment='left', verticalalignment='bottom'
                         )
-
-        # Apply tight layout to minimize padding
-        self.figure.tight_layout(pad=0.1)
+        self.figure.tight_layout()  # Apply tight layout
         self.canvas.draw()
 
         # Store initial limits
@@ -362,15 +346,20 @@ class FigureWidget(QWidget):
             self.applyZoom(*self.current_zoom_limits)
 
 class CurveControl(QWidget):
-    """
-    Widget for controlling the properties of a curve.
-    """
     changed = pyqtSignal()
 
     def __init__(self, curve_number, curves, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
 
+        # **Apply StyleSheet to the entire TrackControl Widget**
+        self.setStyleSheet("""
+            border-radius: 5px;
+            color: Black;
+            font: 10pt;
+            padding: 2px;
+            height: 30px;
+        """)
 
         # **Curve Number Label**
         self.curve_label = QLabel(f"Curve {curve_number}:")
@@ -411,6 +400,7 @@ class CurveControl(QWidget):
         xy_range_layout = QHBoxLayout()
         xy_range_layout.addWidget(QLabel("X-min:"))
         self.x_min = QLineEdit()
+        self.x_min.setStyleSheet("background-color: White; color: blue; font: 12pt;")
         self.x_min.setFixedWidth(50)
         self.x_min.setPlaceholderText("Auto")
         self.x_min.textChanged.connect(self.changed.emit)  # Connect to changed signal
@@ -418,6 +408,7 @@ class CurveControl(QWidget):
 
         xy_range_layout.addWidget(QLabel("X-max:"))
         self.x_max = QLineEdit()
+        self.x_max.setStyleSheet("background-color: White; color: blue; font: 10pt;")
         self.x_max.setFixedWidth(50)
         self.x_max.setPlaceholderText("Auto")
         self.x_max.textChanged.connect(self.changed.emit)  # Connect to changed signal
@@ -432,9 +423,6 @@ class CurveControl(QWidget):
         layout.addLayout(xy_range_layout)
 
     def select_color(self):
-        """
-        Opens a color picker to change the curve color.
-        """
         color = QColorDialog.getColor()
         if color.isValid():
             self.color = color.name()
@@ -444,19 +432,11 @@ class CurveControl(QWidget):
             self.changed.emit()
 
     def get_line_style(self):
-        """
-        Returns the Matplotlib line style based on selection.
-
-        Returns:
-            str: The Matplotlib line style.
-        """
+        """Returns the Matplotlib line style based on selection."""
         styles = {"Solid": "-", "Dashed": "--", "Dotted": ":", "Dash-dot": "-."}
         return styles[self.line_style_box.currentText()]
 
 class TrackControl(QWidget):
-    """
-    Widget for controlling the properties of a track.
-    """
     changed = pyqtSignal()
 
     def __init__(self, number, curves, parent=None):
@@ -467,7 +447,15 @@ class TrackControl(QWidget):
         self.curve_count = 0  # Track number of added curves
         self.setContextMenuPolicy(Qt.CustomContextMenu)
 
-    
+        # **Apply StyleSheet to the entire TrackControl Widget**
+        self.setStyleSheet("""
+            background-color: White;
+            border-radius: 5px;
+            color: #53003e;
+            font: 10pt;
+            padding: 5px;
+            min-width: fit-content;
+        """)
 
         layout = QVBoxLayout(self)
 
@@ -498,22 +486,24 @@ class TrackControl(QWidget):
 
         # Y min and Y max input fields with fixed width labels
         y_min_label = QLabel("Y min:")
-        y_min_label.setFixedWidth(70)  # Set fixed width for the label
+        y_min_label.setFixedWidth(50)  # Set fixed width for the label
         range_layout.addWidget(y_min_label)
 
         self.y_min = QLineEdit()
+        self.y_min.setStyleSheet("background-color: White; color: blue; font: 12pt;")
         self.y_min.setPlaceholderText("Auto")
-        self.y_min.setFixedWidth(70)  # Set fixed width for the input field
+        self.y_min.setFixedWidth(60)  # Set fixed width for the input field
         self.y_min.textChanged.connect(self.changed.emit)  # Connect to changed signal
         range_layout.addWidget(self.y_min)
 
         y_max_label = QLabel("Y max:")
-        y_max_label.setFixedWidth(70)  # Set fixed width for the label
+        y_max_label.setFixedWidth(50)  # Set fixed width for the label
         range_layout.addWidget(y_max_label)
 
         self.y_max = QLineEdit()
+        self.y_max.setStyleSheet("background-color: White; color: blue; font: 12pt;")
         self.y_max.setPlaceholderText("Auto")
-        self.y_max.setFixedWidth(70)  # Set fixed width for the input field
+        self.y_max.setFixedWidth(60)  # Set fixed width for the input field
         self.y_max.textChanged.connect(self.changed.emit)  # Connect to changed signal
         range_layout.addWidget(self.y_max)
 
@@ -527,7 +517,14 @@ class TrackControl(QWidget):
 
         add_curve_btn = QPushButton("Add Curve")
         add_curve_btn.setFixedSize(150, 30)
+        add_curve_btn.setStyleSheet("""
+            background-color: White;
+            border-radius: 5px;
+            color: blue;
+            font: 12pt;
+            font-weight: bold;
 
+        """)
         add_curve_btn.clicked.connect(lambda: self.add_curve(curves))
 
         # Center the button within its layout
@@ -543,9 +540,7 @@ class TrackControl(QWidget):
         self.add_curve(curves)  # Start with one curve
 
     def select_bg_color(self):
-        """
-        Opens a color picker to change the background color and update the button.
-        """
+        """Opens a color picker to change background color and update the button."""
         color = QColorDialog.getColor()
         if color.isValid():
             self.bg_color = color.name()
@@ -553,12 +548,6 @@ class TrackControl(QWidget):
             self.changed.emit()
 
     def add_curve(self, curves):
-        """
-        Adds a new curve to the track.
-
-        Parameters:
-            curves (list): The list of available curves.
-        """
         self.curve_count += 1  # Increment curve number
         curve = CurveControl(self.curve_count, curves)  # Pass curve_number
         curve.changed.connect(self.changed.emit)
@@ -568,12 +557,6 @@ class TrackControl(QWidget):
         self.changed.emit()
 
     def remove_curve(self, index):
-        """
-        Removes a curve from the track.
-
-        Parameters:
-            index (int): The index of the curve to remove.
-        """
         curve = self.curve_tabs.widget(index)
         if curve:
             self.curves.remove(curve)
@@ -583,9 +566,7 @@ class TrackControl(QWidget):
             self.changed.emit()
 
     def update_curve_numbers(self):
-        """
-        Renumbers curves after a deletion or addition.
-        """
+        """Renumbers curves after a deletion or addition."""
         for i, curve in enumerate(self.curves, start=1):
             curve.curve_label.setText(f"Curve {i}:")
             self.curve_tabs.setTabText(i - 1, f"Curve {i}")
@@ -684,6 +665,7 @@ class WellLogViewer(QMainWindow):
         menubar.addAction(self.share_y_axis_action)
 
         self.dock = QDockWidget("Control", self)
+        self.dock.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 12pt;")
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
 
         dock_widget = QWidget()
@@ -708,17 +690,12 @@ class WellLogViewer(QMainWindow):
         dock_layout.addLayout(list_layout)
 
         btn_add_track = QPushButton("Track +")
-        btn_add_track.setFixedSize(150, 40)
-        btn_add_track.setStyleSheet("background-color: Green; color:white; font: 12pt;")
+        btn_add_track.setStyleSheet("background-color: White; border-radius: 5px; color: blue; font: 15pt; font-weight: bold;")
         btn_add_track.clicked.connect(self.add_track)
-        # Center the button within its layout
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch(1)
-        btn_layout.addWidget(btn_add_track)
-        btn_layout.addStretch(1)
-        dock_layout.addLayout(btn_layout)
+        dock_layout.addWidget(btn_add_track)
 
         self.track_tabs = QTabWidget()
+        self.track_tabs.setStyleSheet("background-color: #e2e2e2; border-radius: 5px; color: #53003e; font: 10pt;")
         self.track_tabs.setTabsClosable(True)
         self.track_tabs.tabCloseRequested.connect(self.delete_track)
         dock_layout.addWidget(self.track_tabs)
@@ -726,30 +703,11 @@ class WellLogViewer(QMainWindow):
         dock_widget.setLayout(dock_layout)
         self.dock.setWidget(dock_widget)
 
-    def store_current_zoom_limits(self):
-        """Store current zoom limits from all visible wells"""
-        self.current_zoom_states = {}
-        for well_name, widget in self.figure_widgets.items():
-            if widget.current_zoom_limits:
-                self.current_zoom_states[well_name] = widget.current_zoom_limits        
-
-    def reapply_zoom_limits(self):
-        """Reapply stored zoom limits after updates"""
-        if hasattr(self, 'current_zoom_states'):
-            for well_name, zoom_limits in self.current_zoom_states.items():
-                if well_name in self.figure_widgets:
-                    self.figure_widgets[well_name].applyZoom(*zoom_limits)                
-
     def toggle_link_well_tops(self, checked):
         """Toggle the well top connections feature."""
-        # Store current zoom states before making changes
-        self.store_current_zoom_limits()
-
         self.link_well_tops_enabled = checked
         self.link_well_tops_action.setText("Unlink Well Tops" if checked else "Link Well Tops")
         self.update_plot()
-        # Reapply zoom states after toggling
-        self.reapply_zoom_limits()
 
     def onShareYAxisToggled(self, checked):
         """Handle share Y-axis toggle."""
@@ -765,8 +723,7 @@ class WellLogViewer(QMainWindow):
         """Synchronize Y-axis limits across all wells."""
         if not self.figure_widgets:
             return
-        # Store current zoom states before making changes
-        self.store_current_zoom_limits()
+
         # Get the Y-axis limits from the selected wells
         selected_wells = [
             self.well_list.item(i).text() 
@@ -790,12 +747,7 @@ class WellLogViewer(QMainWindow):
                 if idx != 0:  # Hide ticks and tick labels for all but the first well
                     ax.tick_params(left=False, labelleft=False)
                     ax.set_ylabel(None)
-                # Remove left and right margins for all but the first well
-                if idx != 0:
-                    widget.figure.subplots_adjust(left=0, right=1)                   
             widget.canvas.draw()
-        # Reapply zoom states after synchronization
-        self.reapply_zoom_limits()
 
     def onSyncZoomToggled(self, checked):
         """Handle sync zoom toggle."""
@@ -858,9 +810,9 @@ class WellLogViewer(QMainWindow):
             widget.recordCurrentZoom()
 
         # Also apply to connection subplots if they exist
-        # Apply to all connection widgets
         for conn_widget in self.connection_widgets:
-            self.update_connection_axis(conn_widget)
+            if hasattr(conn_widget, 'applyZoom'):
+                conn_widget.applyZoom(*sender.current_zoom_limits)
 
     def handleSingleZoom(self, sender):
         """Handle single zoom event - apply to the selected well only"""
@@ -876,11 +828,6 @@ class WellLogViewer(QMainWindow):
             if widget.well_name == sender.well_name:
                 widget.applyZoom(*sender.current_zoom_limits)
                 widget.recordCurrentZoom()
-
-        for conn_widget in self.connection_widgets:
-            if (conn_widget.well1.well_name == sender.well_name or 
-                conn_widget.well2.well_name == sender.well_name):
-                self.update_connection_axis(conn_widget)
 
     def undoZoom(self):
         """Undo the last zoom operation"""
@@ -919,9 +866,6 @@ class WellLogViewer(QMainWindow):
 
     def update_plot(self):
         """Main update method that handles well selection/deselection"""
-        # Store current zoom states before making changes
-        self.store_current_zoom_limits()
-
         selected_wells = [self.well_list.item(i).text() for i in range(self.well_list.count())
                         if self.well_list.item(i).checkState() == Qt.Checked]
 
@@ -988,132 +932,90 @@ class WellLogViewer(QMainWindow):
         # Draw well top connections if enabled
         if self.link_well_tops_enabled and len(selected_wells) > 1:
             self.draw_well_top_connections()
-        # Reapply zoom states after all updates
-        self.reapply_zoom_limits()
-
+ 
     def draw_well_top_connections(self):
         """Draw perfectly aligned connections between well tops with precise spine alignment"""
-        # Store current zoom states before making changes
-        self.store_current_zoom_limits()
-
         selected_wells = self.get_ordered_visible_wells()
         if len(selected_wells) < 2 or not self.selected_top_names:
             return
-        
-        # Get reference dimensions from the first well plot
+        # Get reference dimensions from first well plot
         ref_well = self.figure_widgets[selected_wells[0]]
         ref_fig = ref_well.figure
         plt_bbox = ref_fig.axes[-1].get_position()  # Get position of last track's axes
 
-        for i in range(len(selected_wells) - 1):
+        for i in range(len(selected_wells)-1):
             well1, well2 = selected_wells[i], selected_wells[i+1]
             widget1 = self.figure_widgets[well1]
             widget2 = self.figure_widgets[well2]
             
-            # Get axes from each well
-            right_ax = widget1.figure.axes[-1]
-            left_ax = widget2.figure.axes[0]
+            # Get exact spine positions from adjacent tracks
+            right_ax = widget1.figure.axes[-1]  # Rightmost axis of left well
+            left_ax = widget2.figure.axes[0]    # Leftmost axis of right well
             
-            # Create minimal connection figure and canvas
+            # Create minimal connection figure
             conn_fig = Figure(layout='tight', figsize=(300, 6))
             canvas = FigureCanvas(conn_fig)
             canvas.setFixedWidth(300)
             canvas.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
-            # Create connection axes using the reference position
+            # Create connection axes matching the height of well plots
+            #ax = conn_fig.add_axes([0, 0, 1, 1])  # Full figure area
+            # Create connection axes with reference positioning
             ax = conn_fig.add_axes(plt_bbox)
-            ax.set_position([0, plt_bbox.y0, 1, plt_bbox.y1])
+            #ax.set_position([0, plt_bbox.y0, 1, plt_bbox.height])  # Full width of the minimal figure
+            ax.set_position([0, plt_bbox.y0, 1, plt_bbox.y1])  # Full width of the minimal figure
             
-            # Setup spines
+            # Precisely match the right spine to left well's right spine
             ax.spines['right'].set_visible(True)
             ax.spines['right'].set_color(right_ax.spines['right'].get_edgecolor())
             ax.spines['right'].set_linewidth(right_ax.spines['right'].get_linewidth())
             ax.spines['right'].set_position(right_ax.spines['right'].get_position())
             
+            # Precisely match the left spine to right well's left spine
             ax.spines['left'].set_visible(True)
             ax.spines['left'].set_color(left_ax.spines['left'].get_edgecolor())
             ax.spines['left'].set_linewidth(left_ax.spines['left'].get_linewidth())
             ax.spines['left'].set_position(left_ax.spines['left'].get_position())
             
+            # Hide top and bottom spines
             ax.spines['top'].set_visible(False)
             ax.spines['bottom'].set_visible(False)
             
-            # Set initial y-limits
+            # Match axis limits
             ymin = max(right_ax.get_ylim()[0], left_ax.get_ylim()[0])
             ymax = min(right_ax.get_ylim()[1], left_ax.get_ylim()[1])
             ax.set_ylim(ymin, ymax)
             
-            # Remove ticks and labels
+            # Remove all ticks and labels
             ax.set_xticks([])
             ax.set_yticks([])
+            
+            # Transparent background
             conn_fig.patch.set_alpha(0)
             ax.patch.set_alpha(0)
 
-            # Draw connection lines for common well tops
-            tops1 = {t: md for t, md in self.well_tops.get(well1, []) if t in self.selected_top_names}
-            tops2 = {t: md for t, md in self.well_tops.get(well2, []) if t in self.selected_top_names}
+            # Get common well tops
+            tops1 = {t:md for t,md in self.well_tops.get(well1, []) if t in self.selected_top_names}
+            tops2 = {t:md for t,md in self.well_tops.get(well2, []) if t in self.selected_top_names}
             common_tops = set(tops1.keys()) & set(tops2.keys())
 
+            # Draw connection lines between exact spine positions
             for top in common_tops:
                 y1 = tops1[top]
                 y2 = tops2[top]
                 ax.plot([0, 1], [y1, y2], color='red', linewidth=1, alpha=0.7,
-                        transform=ax.get_yaxis_transform())
+                       transform=ax.get_yaxis_transform())
 
-            # Create connection widget
+            # Container widget
             conn_widget = QWidget()
             conn_widget.setFixedWidth(300)
             layout = QVBoxLayout(conn_widget)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.addWidget(canvas)
-
-            # Add connection widget to layout and tracking list
+            
+            # Insert between wells
             self.figure_layout.insertWidget(self.figure_layout.indexOf(widget1) + 1, conn_widget)
             self.connection_widgets.append(conn_widget)
-            
-            # Store the axes reference in the connection widget for later updates
-            conn_widget.ax = ax
-            conn_widget.well1 = widget1
-            conn_widget.well2 = widget2
-            
-            # Connect zoom signals based on current sync mode
-            if self.sync_zoom_enabled:
-                # In sync mode, connection widgets will be updated by handleSyncZoom
-                pass
-            else:
-                # In single zoom mode, update connection when either well is zoomed
-                widget1.zoomChanged.connect(lambda _, c=conn_widget: self.update_connection_axis(c))
-                widget2.zoomChanged.connect(lambda _, c=conn_widget: self.update_connection_axis(c))
-            
-            # Apply current zoom limits if they exist
-            if self.sync_zoom_enabled and self.sync_zoom_limits:
-                self.update_connection_axis(conn_widget)
-            elif not self.sync_zoom_enabled and self.single_zoom_limits:
-                if well1 == self.current_single_zoom_well or well2 == self.current_single_zoom_well:
-                    self.update_connection_axis(conn_widget)
-        # Reapply zoom states after drawing connections
-        self.reapply_zoom_limits()
-
-    def update_connection_axis(self, conn_widget):
-        """Update the connection axis based on the current zoom state of connected wells"""
-        right_ax = conn_widget.well1.figure.axes[-1]
-        left_ax = conn_widget.well2.figure.axes[0]
-        
-        # Get the most restrictive y-limits (intersection of both wells' visible ranges)
-        ymin = max(right_ax.get_ylim()[0], left_ax.get_ylim()[0])
-        ymax = min(right_ax.get_ylim()[1], left_ax.get_ylim()[1])
-        
-        # Update the connection axis limits
-        conn_widget.ax.set_ylim(ymin, ymax)
-        
-        # Update spine positions
-        conn_widget.ax.spines['right'].set_position(right_ax.spines['right'].get_position())
-        conn_widget.ax.spines['left'].set_position(left_ax.spines['left'].get_position())
-        
-        # Redraw the canvas
-        conn_widget.ax.figure.canvas.draw_idle()    
-
-
     def get_ordered_visible_wells(self):
         """Get wells in their current display order"""
         wells = []
@@ -1385,10 +1287,9 @@ class WellLogViewer(QMainWindow):
                     track.update_curve_numbers()
         self.update_plot()
 
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyleSheet(loadStyleSheet("lightmode_2.qss"))
+    app.setStyleSheet(loadStyleSheet("style/darkmode.qss"))
     viewer = WellLogViewer()
     viewer.show()
     sys.exit(app.exec_())

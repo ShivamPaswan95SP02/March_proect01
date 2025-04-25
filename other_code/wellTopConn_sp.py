@@ -184,6 +184,7 @@ class FigureWidget(QWidget):
             self.current_zoom_limits = None
             self._zoom_history = []
             self.canvas.draw()
+            
 
     def recordCurrentZoom(self):
         """Record current zoom state for undo functionality"""
@@ -760,6 +761,10 @@ class WellLogViewer(QMainWindow):
         else:
             self.share_y_axis_action.setText("Enable Link Y Axis")
             self.update_plot()
+                    # Update connection axes after undoing zoom
+        for conn_widget in self.connection_widgets:
+            self.update_connection_axis(conn_widget)
+            
 
     def synchronizeYAxisLimits(self):
         """Synchronize Y-axis limits across all wells."""
@@ -796,6 +801,10 @@ class WellLogViewer(QMainWindow):
             widget.canvas.draw()
         # Reapply zoom states after synchronization
         self.reapply_zoom_limits()
+
+        # Update connection axes after undoing zoom
+        for conn_widget in self.connection_widgets:
+            self.update_connection_axis(conn_widget)
 
     def onSyncZoomToggled(self, checked):
         """Handle sync zoom toggle."""
@@ -894,9 +903,17 @@ class WellLogViewer(QMainWindow):
             if self.current_single_zoom_well:
                 widget = self.figure_widgets[self.current_single_zoom_well]
                 widget.undoZoom()
+                
+        # Reapply Y-axis limits if sharing is enabled
+        if self.share_y_axis_enabled:
+            self.synchronizeYAxisLimits()
+
+        # Update connection axes after undoing zoom
+        for conn_widget in self.connection_widgets:
+            self.update_connection_axis(conn_widget)
 
     def resetZoom(self):
-        """Reset zoom for all wells"""
+        """Reset zoom for all wells and maintain Y-axis link if enabled."""
         if self.sync_zoom_enabled:
             for widget in self.figure_widgets.values():
                 widget.resetZoom()
@@ -910,6 +927,15 @@ class WellLogViewer(QMainWindow):
                 widget.resetZoom()
                 self.current_single_zoom_well = None
                 self.single_zoom_limits = None
+
+        # Reapply Y-axis limits if sharing is enabled
+        if self.share_y_axis_enabled:
+            self.synchronizeYAxisLimits()
+
+        # Update connection axes after resetting zoom
+        for conn_widget in self.connection_widgets:
+            self.update_connection_axis(conn_widget)
+
 
     def toggle_well_tops(self):
         """Toggle the visibility of well tops."""

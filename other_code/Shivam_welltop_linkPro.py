@@ -193,14 +193,18 @@ class FigureWidget(QWidget):
         """
         Undo the last zoom operation.
         """
-        if len(self._zoom_history) > 1:
-            prev_limits = self._zoom_history.pop()
-            self.applyZoom(*prev_limits)
-            return True
-        elif self._initial_limits:
-            # If no zoom history, revert to initial limits
-            self.resetZoom()
-        return False
+        try:
+            if self._zoom_history:
+                prev_limits = self._zoom_history.pop()
+                self.applyZoom(*prev_limits)
+                return True
+            elif self._initial_limits:
+                # If no zoom history, revert to initial limits
+                self.resetZoom()
+            return False
+        except Exception as e:
+            print(f"Error while undoing zoom: {e}")
+            return False
 
     def resetZoom(self):
         """
